@@ -215,10 +215,10 @@ def draw_pn_diode(length=1.0, width=1.0, junction_position=0.5,
     return _wrap_svg("\n".join(parts), width=620, height=top + dh + 80)
 
 
-def draw_mosfet(channel_length=0.025, gate_oxide_thickness=0.012,
-                junction_depth=0.018, device_width=0.125, device_depth=0.068,
-                channel_doping=1e19, substrate_doping=5e16,
-                source_drain_doping=1e20, device_type="nmos", interactive=False, **kwargs):
+def draw_mosfet(channel_length=0.15, gate_oxide_thickness=0.002,
+                junction_depth=0.02, device_width=0.25, device_depth=0.05,
+                channel_doping=1e18, substrate_doping=5e16,
+                source_drain_doping=2e20, device_type="nmos", interactive=False, **kwargs):
     """Draw MOSFET cross-section based on user parameters."""
     is_nmos = device_type.lower() == "nmos"
     margin = 60
@@ -399,7 +399,7 @@ def draw_bjt(emitter_width=1.0, base_width=0.5, collector_width=2.0,
 
 def draw_mesfet(channel_length=0.2, gate_length=0.2, device_width=0.6,
                 channel_depth=0.2, substrate_depth=0.8,
-                channel_doping=1e17, substrate_doping=1e17,
+                channel_doping=1e17, substrate_doping=1e10,
                 contact_doping=1e20, device_type="n",
                 gate_workfunction=4.87, interactive=False, **kwargs):
     """Draw MESFET cross-section based on user parameters."""
@@ -495,8 +495,8 @@ def draw_mesfet(channel_length=0.2, gate_length=0.2, device_width=0.6,
     return _wrap_svg("\n".join(parts), width=620, height=top + dh_total_actual + 45)
 
 
-def draw_mos_capacitor(oxide_thickness=0.002, silicon_thickness=0.03,
-                       device_width=1.0, substrate_doping=1e18,
+def draw_mos_capacitor(oxide_thickness=0.002, silicon_thickness=5.0,
+                       device_width=1.0, substrate_doping=1e16,
                        substrate_type="p", gate_type="n_poly",
                        gate_config="single", back_oxide_thickness=0.002,
                        back_gate_type="n_poly", interactive=False, **kwargs):

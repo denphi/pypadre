@@ -2,37 +2,47 @@
 MOSFET factory function.
 """
 
+import warnings
 from typing import Optional, Tuple, List
+from ..estimates import estimate_mosfet_vt
 from ..simulation import Simulation
 from ..mesh import Mesh
 from ..region import Region
 from ..electrode import Electrode
 from ..doping import Doping
 from ..contact import Contact
+from ..material import Material
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
 from ..plot3d import Plot3D
+from ._common import (
+    check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP, DRAIN_STEP,
+)
 
 
 def create_mosfet(
-    # Geometry parameters
-    channel_length: float = 0.025,
-    gate_oxide_thickness: float = 0.012,
-    junction_depth: float = 0.018,
-    device_width: float = 0.125,
-    device_depth: float = 0.068,
+    # Geometry parameters (defaults match the nanoHUB Rappture MOSFET tool)
+    channel_length: float = 0.15,
+    gate_oxide_thickness: float = 0.002,
+    junction_depth: float = 0.02,
+    device_width: float = 0.25,
+    device_depth: float = 0.05,
+    device_z_width: float = 1.0,
     # Mesh parameters
-    nx: int = 51,
-    ny: int = 51,
+    nx: int = 53,
+    ny: int = 46,
     # Doping parameters
-    channel_doping: float = 1e19,
+    channel_doping: float = 1e18,
     substrate_doping: float = 5e16,
-    source_drain_doping: float = 1e20,
+    source_drain_doping: float = 2e20,
     device_type: str = "nmos",
     # Physical models
     temperature: float = 300,
     bgn: bool = True,
+    conmob: bool = True,
+    fldmob: bool = True,
+    gatmob: bool = True,
     carriers: int = 1,
     # Simulation options
     title: Optional[str] = None,
@@ -61,31 +71,41 @@ def create_mosfet(
     Parameters
     ----------
     channel_length : float
-        Gate/channel length in microns (default: 0.025)
+        Gate/channel length in microns (default: 0.15)
     gate_oxide_thickness : float
-        Gate oxide thickness in microns (default: 0.012)
+        Gate oxide thickness in microns (default: 0.002 = 2 nm)
     junction_depth : float
-        Source/drain junction depth in microns (default: 0.018)
+        Source/drain junction depth in microns (default: 0.02)
     device_width : float
-        Total device width in microns (default: 0.125)
+        Total device width in microns (default: 0.25)
     device_depth : float
-        Substrate depth in microns (default: 0.068)
+        Substrate depth in microns (default: 0.05)
+    device_z_width : float
+        Depth of the device in the third dimension in microns (default:
+        1.0). Terminal currents scale linearly with this value.
     nx : int
-        Mesh points in x direction (default: 51)
+        Mesh points in x direction (default: 53)
     ny : int
-        Mesh points in y direction (default: 51)
+        Mesh points in y direction (default: 46)
     channel_doping : float
-        Channel doping concentration in cm^-3 (default: 1e19)
+        Channel doping concentration in cm^-3 (default: 1e18)
     substrate_doping : float
         Substrate doping concentration in cm^-3 (default: 5e16)
     source_drain_doping : float
-        Source/drain doping concentration in cm^-3 (default: 1e20)
+        Source/drain doping concentration in cm^-3 (default: 2e20)
     device_type : str
         "nmos" or "pmos" (default: "nmos")
     temperature : float
         Simulation temperature in Kelvin (default: 300)
     bgn : bool
         Enable band-gap narrowing (default: True)
+    conmob : bool
+        Enable concentration-dependent mobility (default: True)
+    fldmob : bool
+        Enable field-dependent mobility / velocity saturation (default: True).
+        Required for correct drain-current saturation.
+    gatmob : bool
+        Enable transverse (gate) field mobility degradation (default: True)
     carriers : int
         Number of carriers to solve (1 or 2, default: 1)
     title : str, optional
@@ -147,9 +167,11 @@ def create_mosfet(
     sim._device_kwargs = dict(
         channel_length=channel_length, gate_oxide_thickness=gate_oxide_thickness,
         junction_depth=junction_depth, device_width=device_width,
-        device_depth=device_depth, nx=nx, ny=ny, channel_doping=channel_doping,
+        device_depth=device_depth, device_z_width=device_z_width,
+        nx=nx, ny=ny, channel_doping=channel_doping,
         substrate_doping=substrate_doping, source_drain_doping=source_drain_doping,
-        device_type=device_type, temperature=temperature, bgn=bgn, carriers=carriers,
+        device_type=device_type, temperature=temperature, bgn=bgn,
+        conmob=conmob, fldmob=fldmob, gatmob=gatmob, carriers=carriers,
         title=title, log_iv=log_iv, iv_file=iv_file, log_bands_eq=log_bands_eq,
         log_bands_bias=log_bands_bias, vgs_sweep=vgs_sweep, vds=vds,
         vds_sweep=vds_sweep, vgs=vgs,
@@ -165,30 +187,53 @@ def create_mosfet(
             f"to leave room for source/drain regions."
         )
 
+    check_mesh_size(nx, ny, "create_mosfet")
+
     # Calculate dimensions
     sd_width = (device_width - channel_length) / 2
     total_height = device_depth + junction_depth + gate_oxide_thickness
 
-    # Mesh points distribution
-    nx_sd = int(nx * sd_width / device_width)
+    # Mesh points distribution.  The y nodes follow the reference deck's
+    # allocation (~20% substrate, ~70% junction/channel zone, ~10% oxide)
+    # rather than a geometric split: the junction zone is where carrier
+    # gradients are steepest and needs most of the resolution.
+    nx_sd = max(2, int(nx * sd_width / device_width))
     nx_ch = nx - 2 * nx_sd
-    ny_sub = int(ny * device_depth / total_height)
-    ny_junc = int(ny * junction_depth / total_height)
-    ny_ox = ny - ny_sub - ny_junc
+    ny_sub = max(2, int(ny * 0.2))
+    ny_ox = max(2, int(ny * 0.1))
+    ny_junc = ny - ny_sub - ny_ox
+    if nx_ch < 3:
+        raise ValueError(
+            f"nx={nx} leaves only {nx_ch} channel mesh columns; increase nx "
+            f"or reduce the source/drain width fraction."
+        )
+    if ny_junc < 4:
+        raise ValueError(
+            f"ny={ny} leaves only {ny_junc} junction-zone mesh rows; "
+            f"increase ny (need at least ~10)."
+        )
 
-    sim.mesh = Mesh(nx=nx, ny=ny)
+    # width= is the z-depth; omit when 1.0 (the PADRE default)
+    _zw = None if device_z_width == 1.0 else device_z_width
+    sim.mesh = Mesh(nx=nx, ny=ny, width=_zw)
 
-    # X mesh (source - channel - drain)
+    # X mesh (source - channel - drain), refined at both junctions
     sim.mesh.add_x_mesh(1, 0)
     sim.mesh.add_x_mesh(nx_sd, sd_width, ratio=0.8)
     sim.mesh.add_x_mesh(nx_sd + nx_ch // 2, sd_width + channel_length / 2, ratio=1.25)
     sim.mesh.add_x_mesh(nx_sd + nx_ch, sd_width + channel_length, ratio=0.8)
     sim.mesh.add_x_mesh(nx, device_width, ratio=1.25)
 
-    # Y mesh (substrate - junction - oxide)
+    # Y mesh (substrate - junction - oxide).
+    # The junction-depth zone is split so spacing contracts toward the
+    # Si/SiO2 interface where the inversion layer forms (reference deck
+    # uses r=0.87 then r=0.7); the oxide expands away from the interface.
+    ny_jsplit = ny_sub + max(1, ny_junc // 2)
+    y_jsplit = device_depth + 0.6 * junction_depth
     sim.mesh.add_y_mesh(1, 0)
     sim.mesh.add_y_mesh(ny_sub, device_depth, ratio=0.8)
-    sim.mesh.add_y_mesh(ny_sub + ny_junc, device_depth + junction_depth, ratio=1.25)
+    sim.mesh.add_y_mesh(ny_jsplit, y_jsplit, ratio=0.875)
+    sim.mesh.add_y_mesh(ny_sub + ny_junc, device_depth + junction_depth, ratio=0.7)
     sim.mesh.add_y_mesh(ny, total_height, ratio=1.25)
 
     # Regions
@@ -225,21 +270,59 @@ def create_mosfet(
     # Contacts
     sim.add_contact(Contact(number=3, n_polysilicon=is_nmos, p_polysilicon=not is_nmos))
 
-    # Models
-    sim.models = Models(temperature=temperature, bgn=bgn)
+    # Materials — matches the reference Rappture deck:
+    #   material name=silicon eg300=1.12 permi=11.8 In.Model=klaassen
+    #   + MUn=1400 VSATn=1.03e+07 En.Mu=2 IIN.MU=55.6,9.9e16,0.66,0.84,3.47e20
+    #   material name=sio2 permi=3.9
+    sim.add_material(Material(
+        name="silicon", eg300=1.12, permittivity=11.8,
+        in_model="klaassen", mun=1400, vsatn=1.03e7,
+        en_mu=[2], iin_mu=[55.6, 9.9e16, 0.66, 0.84, 3.47e20],
+    ))
+    sim.add_material(Material(name="sio2", permittivity=3.9))
+
+    # Models — conmob/fldmob/gatmob are required for accurate mobility,
+    # velocity saturation (Id saturation), and gate-field degradation.
+    sim.models = Models(temperature=temperature, bgn=bgn,
+                        conmob=conmob, fldmob=fldmob, gatmob=gatmob,
+                        print_models=True)
     if carriers == 1:
         sim.system = System(newton=True, carriers=1, electrons=is_nmos, holes=not is_nmos)
     else:
         sim.system = System(newton=True, carriers=2, electrons=True, holes=True)
 
-    # I-V logging
-    if log_iv:
+    # Sanity check: warn when the analytic threshold voltage lies beyond
+    # the requested gate sweep (device would never turn on in the sweep).
+    if vgs_sweep is not None:
+        vt = estimate_mosfet_vt(channel_doping, gate_oxide_thickness,
+                                temperature, is_nmos)
+        v_hi = max(vgs_sweep[0], vgs_sweep[1])
+        v_lo = min(vgs_sweep[0], vgs_sweep[1])
+        beyond = (vt > v_hi) if is_nmos else (vt < v_lo)
+        if beyond:
+            warnings.warn(
+                f"create_mosfet: estimated threshold voltage Vt ≈ {vt:.2f} V "
+                f"lies outside the vgs_sweep range [{v_lo}, {v_hi}] V — the "
+                f"device will not turn on during the sweep. Reduce "
+                f"channel_doping or gate_oxide_thickness, or extend the sweep.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # I-V logging.  When bias solves are generated below, the LOG statement
+    # is inserted right before the characteristic sweep instead, so that
+    # equilibrium/pre-bias ramp points do not pollute the I-V file.
+    has_sweeps = vgs_sweep is not None or vds_sweep is not None
+    if log_iv and not has_sweeps:
         sim.add_log(Log(ivfile=iv_file))
 
     # Only add solve commands if sweeps, contour maps, or band logging are specified
     if vgs_sweep is not None or vds_sweep is not None or log_bands_eq or contour_maps:
         # Always start with equilibrium solve
         sim.add_solve(Solve(initial=True, outfile="eq"))
+        n_prior = 1                       # solutions computed so far
+        bias = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}  # last solved electrode biases
+        log_pending = log_iv and has_sweeps
 
         if log_bands_eq:
             # Vertical cut through middle of channel
@@ -255,19 +338,34 @@ def create_mosfet(
             v_start, v_end, v_step = vgs_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
 
-            # Set initial drain voltage (only 1 prior solution: use previous=True)
+            # Ramp drain to the operating bias (never a single jump)
             if abs(vds) > 1e-10:
-                sim.add_solve(Solve(previous=True, v2=vds, electrode=2, outfile="vd_set"))
+                n_prior = add_bias_ramp(sim, 2, bias[2], vds, n_prior,
+                                        max_step=DRAIN_STEP, outfile="vd_set")
+                bias[2] = vds
 
-            # Sweep gate voltage (2 prior solutions now exist: use project=True)
+            # Ramp gate to the sweep starting voltage if nonzero
+            if abs(v_start - bias[3]) > 1e-10:
+                n_prior = add_bias_ramp(sim, 3, bias[3], v_start, n_prior,
+                                        max_step=GATE_STEP, outfile="vg_start")
+                bias[3] = v_start
+
+            # Enable I-V logging only now, so ramp points stay out of the file
+            if log_pending:
+                sim.add_log(Log(ivfile=iv_file))
+                log_pending = False
+
+            # Sweep gate voltage
             sim.add_solve(Solve(
-                project=True,
+                **solve_guess(n_prior),
                 v3=v_start,
                 vstep=v_step,
                 nsteps=nsteps,
                 electrode=3,
                 outfile="idvg"
             ))
+            n_prior += nsteps + 1
+            bias[3] = v_start + v_step * nsteps
 
             if log_bands_bias:
                 x_mid = device_width / 2.0
@@ -283,20 +381,33 @@ def create_mosfet(
             v_start, v_end, v_step = vds_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
 
-            # Set initial gate voltage if not already in transfer mode
-            # (only 1 prior solution: use previous=True)
+            # Ramp gate to the operating bias if not already in transfer mode
             if vgs_sweep is None and abs(vgs) > 1e-10:
-                sim.add_solve(Solve(previous=True, v3=vgs, electrode=3, outfile="vg_set"))
+                n_prior = add_bias_ramp(sim, 3, bias[3], vgs, n_prior,
+                                        max_step=GATE_STEP, outfile="vg_set")
+                bias[3] = vgs
 
-            # Sweep drain voltage (2 prior solutions now exist: use project=True)
+            # Ramp drain back to the sweep starting voltage if needed
+            if abs(v_start - bias[2]) > 1e-10:
+                n_prior = add_bias_ramp(sim, 2, bias[2], v_start, n_prior,
+                                        max_step=DRAIN_STEP, outfile="vd_start")
+                bias[2] = v_start
+
+            if log_pending:
+                sim.add_log(Log(ivfile=iv_file))
+                log_pending = False
+
+            # Sweep drain voltage
             sim.add_solve(Solve(
-                project=True,
+                **solve_guess(n_prior),
                 v2=v_start,
                 vstep=v_step,
                 nsteps=nsteps,
                 electrode=2,
                 outfile="idvd"
             ))
+            n_prior += nsteps + 1
+            bias[2] = v_start + v_step * nsteps
 
             if log_bands_bias:
                 x_mid = device_width / 2.0
@@ -338,23 +449,18 @@ def create_mosfet(
 
             # Bias solve for contour maps (only if no other sweep already applied bias)
             if vgs_sweep is None and vds_sweep is None:
-                # Apply Vgs (gate = electrode 3)
-                # Only 1 prior solution here → previous=True
+                # Ramp Vgs (gate = electrode 3)
                 if abs(contour_vgs) > 1e-10:
-                    sim.add_solve(Solve(
-                        previous=True, v3=contour_vgs,
-                        electrode=3, outfile="contour_vgs_set"
-                    ))
-                # Apply Vds in steps (drain = electrode 2)
-                # 2 prior solutions now exist → project=True
+                    n_prior = add_bias_ramp(sim, 3, bias[3], contour_vgs,
+                                            n_prior, max_step=GATE_STEP,
+                                            outfile="contour_vgs_set")
+                    bias[3] = contour_vgs
+                # Ramp Vds (drain = electrode 2)
                 if abs(contour_vds) > 1e-10:
-                    n_steps = max(1, int(abs(contour_vds) / 0.1))
-                    v_step = contour_vds / n_steps
-                    sim.add_solve(Solve(
-                        project=True, v2=0.0,
-                        vstep=v_step, nsteps=n_steps,
-                        electrode=2, outfile="contour_bias"
-                    ))
+                    n_prior = add_bias_ramp(sim, 2, bias[2], contour_vds,
+                                            n_prior, max_step=0.1,
+                                            outfile="contour_bias")
+                    bias[2] = contour_vds
 
             # Bias dumps
             for qty in quantities:

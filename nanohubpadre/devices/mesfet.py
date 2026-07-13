@@ -9,10 +9,14 @@ from ..region import Region
 from ..electrode import Electrode
 from ..doping import Doping
 from ..contact import Contact
+from ..material import Material
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
 from ..plot3d import Plot3D
+from ._common import (
+    check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP,
+)
 
 
 def create_mesfet(
@@ -22,12 +26,14 @@ def create_mesfet(
     device_width: float = 0.6,
     channel_depth: float = 0.2,
     substrate_depth: float = 0.8,
-    # Mesh parameters
-    nx: int = 61,
-    ny: int = 51,
+    device_z_width: float = 1.0,
+    # Mesh parameters (keep nx*ny below the ~2500-node nanoHUB limit)
+    nx: int = 55,
+    ny: int = 43,
     # Doping parameters
     channel_doping: float = 1e17,
-    substrate_doping: float = 1e17,
+    substrate_doping: float = 1e10,
+    substrate_type: str = "same",
     contact_doping: float = 1e20,
     device_type: str = "n",
     # Gate contact
@@ -37,6 +43,7 @@ def create_mesfet(
     bgn: bool = True,
     conmob: bool = True,
     fldmob: bool = True,
+    statistics: str = "fermi",
     # Simulation options
     title: Optional[str] = None,
     # Output logging options
@@ -68,14 +75,22 @@ def create_mesfet(
         Channel depth in microns (default: 0.2)
     substrate_depth : float
         Substrate depth below channel in microns (default: 0.8)
+    device_z_width : float
+        Depth of the device in the third dimension in microns (default:
+        1.0). Terminal currents scale linearly with this value.
     nx : int
-        Mesh points in x direction (default: 61)
+        Mesh points in x direction (default: 55)
     ny : int
-        Mesh points in y direction (default: 51)
+        Mesh points in y direction (default: 43)
     channel_doping : float
         Channel doping concentration in cm^-3 (default: 1e17)
     substrate_doping : float
-        Substrate doping concentration in cm^-3 (default: 1e17)
+        Substrate doping concentration in cm^-3 (default: 1e10 —
+        semi-insulating, matching the nanoHUB reference tool)
+    substrate_type : str
+        "same" for a substrate doped the same type as the channel
+        (semi-insulating default, like the reference tool) or "opposite"
+        for a junction-isolated substrate (default: "same")
     contact_doping : float
         Source/drain contact doping in cm^-3 (default: 1e20)
     device_type : str
@@ -90,6 +105,9 @@ def create_mesfet(
         Enable concentration-dependent mobility (default: True)
     fldmob : bool
         Enable field-dependent mobility (default: True)
+    statistics : str
+        Carrier statistics: "fermi" (reference tool; needed for the
+        degenerate 1e20 contact regions) or "boltzmann" (default: "fermi")
     title : str, optional
         Simulation title
     log_iv : bool
@@ -138,16 +156,21 @@ def create_mesfet(
     sim._device_kwargs = dict(
         channel_length=channel_length, gate_length=gate_length,
         device_width=device_width, channel_depth=channel_depth,
-        substrate_depth=substrate_depth, nx=nx, ny=ny,
+        substrate_depth=substrate_depth, device_z_width=device_z_width,
+        nx=nx, ny=ny,
         channel_doping=channel_doping, substrate_doping=substrate_doping,
+        substrate_type=substrate_type,
         contact_doping=contact_doping, device_type=device_type,
         gate_workfunction=gate_workfunction, temperature=temperature,
-        bgn=bgn, conmob=conmob, fldmob=fldmob, title=title,
+        bgn=bgn, conmob=conmob, fldmob=fldmob, statistics=statistics,
+        title=title,
         log_iv=log_iv, iv_file=iv_file, log_bands_eq=log_bands_eq,
         vgs=vgs, vds_sweep=vds_sweep,
         contour_maps=contour_maps, contour_vds_bias=contour_vds_bias,
         contour_quantities=contour_quantities,
     )
+
+    check_mesh_size(nx, ny, "create_mesfet")
 
     total_depth = substrate_depth + channel_depth
     source_width = channel_length
@@ -155,8 +178,10 @@ def create_mesfet(
     gate_start = source_width + (device_width - source_width - drain_width - gate_length) / 2
     gate_end = gate_start + gate_length
 
-    # Mesh — deduplicate x-positions that coincide with default geometry
-    sim.mesh = Mesh(nx=nx, ny=ny)
+    # Mesh — deduplicate x-positions that coincide with default geometry.
+    # width= is the z-depth; omit when 1.0 (the PADRE default)
+    _zw = None if device_z_width == 1.0 else device_z_width
+    sim.mesh = Mesh(nx=nx, ny=ny, width=_zw)
     drain_start = device_width - drain_width
     x_positions = [
         (source_width,  0.8),
@@ -170,15 +195,18 @@ def create_mesfet(
         if not any(abs(pos - p) < 1e-12 for p, _ in unique_x):
             unique_x.append((pos, ratio))
 
+    # The channel carries all the current and the gate depletion region:
+    # give it about half the y nodes (reference deck: 21 substrate rows,
+    # 22 channel rows) instead of a proportional split.
+    ny_sub = max(2, ny // 2)
+
     sim.mesh.add_x_mesh(1, 0, ratio=1.1)
     for pos, ratio in unique_x:
         sim.mesh.add_x_mesh(int(nx * pos / device_width), pos, ratio=ratio)
     sim.mesh.add_x_mesh(nx, device_width, ratio=1.1)
     sim.mesh.add_y_mesh(1, 0.0, ratio=1.1)
-    sim.mesh.add_y_mesh(int(ny * substrate_depth / total_depth), substrate_depth, ratio=0.9)
+    sim.mesh.add_y_mesh(ny_sub, substrate_depth, ratio=0.9)
     sim.mesh.add_y_mesh(ny, total_depth, ratio=0.8)
-
-    ny_sub = int(ny * substrate_depth / total_depth)
     nx_src = int(nx * source_width / device_width)
     nx_gate_start = int(nx * gate_start / device_width)
     nx_gate_end = int(nx * gate_end / device_width)
@@ -190,13 +218,27 @@ def create_mesfet(
     sim.add_region(Region(3, ix_low=nx_src, ix_high=nx_drain_start, iy_low=ny_sub, iy_high=ny, silicon=True))
     sim.add_region(Region(4, ix_low=nx_drain_start, ix_high=nx, iy_low=ny_sub, iy_high=ny, silicon=True))
 
-    # Electrodes
+    # Electrodes.  The Schottky gate must never share a mesh column with
+    # the degenerate n+ contact regions (that would short/leak the gate);
+    # the reference deck leaves a one-node gap on each side.
+    gate_ix_low = max(nx_gate_start, nx_src + 1)
+    gate_ix_high = min(nx_gate_end, nx_drain_start - 1)
+    if gate_ix_high <= gate_ix_low:
+        raise ValueError(
+            f"Gate electrode does not fit between the source/drain contact "
+            f"regions (columns {gate_ix_low}..{gate_ix_high}); increase nx "
+            f"or the source/drain-to-gate spacing."
+        )
     sim.add_electrode(Electrode(1, ix_low=1, ix_high=nx_src, iy_low=ny, iy_high=ny))  # Source
     sim.add_electrode(Electrode(2, ix_low=nx_drain_start, ix_high=nx, iy_low=ny, iy_high=ny))  # Drain
-    sim.add_electrode(Electrode(3, ix_low=nx_gate_start, ix_high=nx_gate_end, iy_low=ny, iy_high=ny))  # Gate
+    sim.add_electrode(Electrode(3, ix_low=gate_ix_low, ix_high=gate_ix_high, iy_low=ny, iy_high=ny))  # Gate
 
-    # Doping — substrate is opposite type to the channel
-    sim.add_doping(Doping(region=1, p_type=is_n_type, n_type=not is_n_type,
+    # Doping.  The reference tool uses a semi-insulating substrate doped
+    # the same type as the channel at ~1e10; "opposite" gives a
+    # junction-isolated substrate instead.
+    sub_same = substrate_type.lower() != "opposite"
+    sub_n = is_n_type if sub_same else not is_n_type
+    sim.add_doping(Doping(region=1, n_type=sub_n, p_type=not sub_n,
                           uniform=True, concentration=substrate_doping))
     sim.add_doping(Doping(region=2, n_type=is_n_type, p_type=not is_n_type,
                           uniform=True, concentration=contact_doping))
@@ -209,18 +251,29 @@ def create_mesfet(
     sim.add_contact(Contact(all_contacts=True, neutral=True))
     sim.add_contact(Contact(number=3, workfunction=gate_workfunction))
 
+    # Material — Caughey velocity-saturation model as in the reference deck
+    sim.add_material(Material(name="silicon", en_model="caughey"))
+
     # Models
-    sim.models = Models(temperature=temperature, bgn=bgn, conmob=conmob, fldmob=fldmob)
+    sim.models = Models(temperature=temperature, bgn=bgn, conmob=conmob,
+                        fldmob=fldmob, statistics=statistics,
+                        print_models=True)
     sim.system = System(newton=True, carriers=1, electrons=is_n_type, holes=not is_n_type)
 
-    # I-V logging
-    if log_iv:
+    # I-V logging.  When bias solves are generated below, the LOG statement
+    # is inserted right before the characteristic sweep instead, so that
+    # equilibrium/pre-bias ramp points do not pollute the I-V file.
+    has_sweeps = vds_sweep is not None
+    if log_iv and not has_sweeps:
         sim.add_log(Log(ivfile=iv_file))
 
     # Only add solve commands if sweeps, contour maps, or band logging are specified
     if vds_sweep is not None or log_bands_eq or contour_maps:
         # Always start with equilibrium solve
         sim.add_solve(Solve(initial=True, outfile="eq"))
+        n_prior = 1                       # solutions computed so far
+        bias = {1: 0.0, 2: 0.0, 3: 0.0}   # last solved electrode biases
+        log_pending = log_iv and has_sweeps
 
         # Log band diagram at equilibrium (horizontal cut through channel)
         if log_bands_eq:
@@ -237,19 +290,28 @@ def create_mesfet(
             v_start, v_end, v_step = vds_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
 
-            # Set gate-source voltage first (only 1 prior solution: use previous=True)
-            if abs(vgs) > 1e-10:
-                sim.add_solve(Solve(previous=True, v3=vgs, electrode=3, outfile="vgs_set"))
+            # Ramp gate-source voltage to the operating point
+            if abs(vgs - bias[3]) > 1e-10:
+                n_prior = add_bias_ramp(sim, 3, bias[3], vgs, n_prior,
+                                        max_step=GATE_STEP, outfile="vgs_set")
+                bias[3] = vgs
 
-            # Sweep drain-source voltage (2 prior solutions now exist: use project=True)
+            # Enable I-V logging only now, so ramp points stay out of the file
+            if log_pending:
+                sim.add_log(Log(ivfile=iv_file))
+                log_pending = False
+
+            # Sweep drain-source voltage
             sim.add_solve(Solve(
-                project=True,
+                **solve_guess(n_prior),
                 v2=v_start,
                 vstep=v_step,
                 nsteps=nsteps,
                 electrode=2,
                 outfile="idvd"
             ))
+            n_prior += nsteps + 1
+            bias[2] = v_start + v_step * nsteps
 
         # 2D contour maps (Plot3D scatter files)
         if contour_maps:
@@ -282,16 +344,12 @@ def create_mesfet(
 
             # Bias solve for contour maps (only if no other sweep already applied bias)
             if vds_sweep is None:
-                # Apply Vds in steps (drain = electrode 2)
-                # Only 1 prior solution here → previous=True for first step
+                # Ramp Vds (drain = electrode 2)
                 if abs(contour_vds_bias) > 1e-10:
-                    n_steps = max(1, int(abs(contour_vds_bias) / 0.1))
-                    v_step = contour_vds_bias / n_steps
-                    sim.add_solve(Solve(
-                        previous=True, v2=0.0,
-                        vstep=v_step, nsteps=n_steps,
-                        electrode=2, outfile="contour_bias"
-                    ))
+                    n_prior = add_bias_ramp(sim, 2, bias[2], contour_vds_bias,
+                                            n_prior, max_step=0.1,
+                                            outfile="contour_bias")
+                    bias[2] = contour_vds_bias
 
             # Bias dumps
             for qty in quantities:

@@ -12,12 +12,14 @@ from ..contact import Contact
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
+from ._common import check_mesh_size
 
 
 def create_schottky_diode(
     # Geometry parameters
     length: float = 2.0,
     width: float = 1.0,
+    device_z_width: float = 1.0,
     # Mesh parameters
     nx: int = 100,
     ny: int = 20,
@@ -27,7 +29,9 @@ def create_schottky_diode(
     # Contact parameters
     workfunction: float = 4.8,
     barrier_lowering: bool = False,
-    surf_rec: bool = False,
+    surf_rec: bool = True,
+    vsurfn: float = 2.2e6,
+    vsurfp: float = 1.9e6,
     # Physical models
     temperature: float = 300,
     srh: bool = False,
@@ -54,7 +58,10 @@ def create_schottky_diode(
     length : float
         Device length in microns (default: 2.0)
     width : float
-        Device width in microns (default: 1.0)
+        Device width (y extent) in microns (default: 1.0)
+    device_z_width : float
+        Depth of the device in the third dimension in microns (default:
+        1.0). Terminal currents scale linearly with this value.
     nx : int
         Mesh points in x direction (default: 100)
     ny : int
@@ -68,7 +75,18 @@ def create_schottky_diode(
     barrier_lowering : bool
         Enable image-force barrier lowering (default: False)
     surf_rec : bool
-        Enable surface recombination at contact (default: False)
+        Enable the thermionic-emission boundary condition (finite surface
+        recombination velocity) at the Schottky contact (default: True).
+        Without it the contact is a plain workfunction Dirichlet condition
+        and the forward I-V magnitude does not follow thermionic-emission
+        theory.
+    vsurfn : float
+        Electron thermionic surface recombination velocity in cm/s
+        (default: 2.2e6, silicon A*=112 A/cm²K²). Only used when
+        surf_rec=True.
+    vsurfp : float
+        Hole thermionic surface recombination velocity in cm/s
+        (default: 1.9e6). Only used when surf_rec=True.
     temperature : float
         Simulation temperature in Kelvin (default: 300)
     srh : bool
@@ -118,30 +136,37 @@ def create_schottky_diode(
     sim = Simulation(title=title or "Schottky Diode")
     sim._device_type = "schottky_diode"
     sim._device_kwargs = dict(
-        length=length, width=width, nx=nx, ny=ny, doping=doping,
+        length=length, width=width, device_z_width=device_z_width,
+        nx=nx, ny=ny, doping=doping,
         doping_type=doping_type, workfunction=workfunction,
         barrier_lowering=barrier_lowering, surf_rec=surf_rec,
+        vsurfn=vsurfn, vsurfp=vsurfp,
         temperature=temperature, srh=srh, conmob=conmob, fldmob=fldmob,
         title=title, log_iv=log_iv, iv_file=iv_file,
         log_bands_eq=log_bands_eq, log_bands_bias=log_bands_bias,
         forward_sweep=forward_sweep, reverse_sweep=reverse_sweep,
     )
 
-    # Mesh with refinement near Schottky contact
-    sim.mesh = Mesh(nx=nx, ny=ny, outfile="mesh")
+    check_mesh_size(nx, ny, "create_schottky_diode")
+
+    # Mesh with refinement near the Schottky contact (y=0): spacing must
+    # be finest AT the contact, where the barrier and depletion region
+    # are, and expand away from it.
+    sim.mesh = Mesh(nx=nx, ny=ny, outfile="mesh",
+                    width=None if device_z_width == 1.0 else device_z_width)
     sim.mesh.add_x_mesh(1, 0)
     sim.mesh.add_x_mesh(nx, length)
     sim.mesh.add_y_mesh(1, 0)
-    
+
     # Ensure intermediate point is valid (between 1 and ny)
     y_idx = int(ny * 0.3)
     if y_idx < 2:
         y_idx = max(2, ny - 1)
-    
+
     # Only add if we have space (ny >= 3)
     if ny >= 3 and y_idx < ny:
-        sim.mesh.add_y_mesh(y_idx, width * 0.1, ratio=0.8)  # Fine mesh near surface
-        
+        sim.mesh.add_y_mesh(y_idx, width * 0.1, ratio=1.25)  # expand away from contact
+
     sim.mesh.add_y_mesh(ny, width, ratio=1.2)
 
     # Region
@@ -155,9 +180,15 @@ def create_schottky_diode(
     sim.add_doping(Doping(region=1, n_type=is_n_type, p_type=not is_n_type,
                           uniform=True, concentration=doping))
 
-    # Contacts
-    sim.add_contact(Contact(number=1, workfunction=workfunction,
-                            surf_rec=surf_rec, barrierl=barrier_lowering))
+    # Contacts — the Schottky contact uses the thermionic-emission
+    # boundary condition (finite surface recombination velocities)
+    if surf_rec:
+        sim.add_contact(Contact(number=1, workfunction=workfunction,
+                                surf_rec=True, vsurfn=vsurfn, vsurfp=vsurfp,
+                                barrierl=barrier_lowering))
+    else:
+        sim.add_contact(Contact(number=1, workfunction=workfunction,
+                                barrierl=barrier_lowering))
     sim.add_contact(Contact(number=2, neutral=True))
 
     # Models

@@ -14,12 +14,14 @@ from ..models import Models
 from ..solver import System, Solve
 from ..options import Options
 from ..log import Log
+from ._common import check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP
 
 
 def create_pn_diode(
     # Geometry parameters
     length: float = 1.0,
     width: float = 1.0,
+    device_z_width: float = 1.0,
     junction_position: float = 0.5,
     intrinsic_width: float = 0.0,
     # Mesh parameters
@@ -64,7 +66,12 @@ def create_pn_diode(
     length : float
         Total device length in microns (default: 1.0)
     width : float
-        Device width in microns (default: 1.0)
+        Device width (y extent) in microns (default: 1.0)
+    device_z_width : float
+        Depth of the device in the third dimension in microns (default:
+        1.0). Terminal currents scale linearly with this value. Note:
+        earlier versions passed `width` here, silently scaling currents
+        with the y extent squared.
     junction_position : float
         Position of the P-I (or P-N) junction as fraction of length (default: 0.5)
     intrinsic_width : float
@@ -160,7 +167,8 @@ def create_pn_diode(
     sim = Simulation(title=title or ("PIN Diode" if is_pin else "PN Junction Diode"))
     sim._device_type = "pn_diode"
     sim._device_kwargs = dict(
-        length=length, width=width, junction_position=junction_position,
+        length=length, width=width, device_z_width=device_z_width,
+        junction_position=junction_position,
         intrinsic_width=intrinsic_width, nx=nx, ny=ny,
         p_doping=p_doping, n_doping=n_doping, intrinsic_doping=intrinsic_doping,
         temperature=temperature, srh=srh, conmob=conmob, fldmob=fldmob,
@@ -175,12 +183,15 @@ def create_pn_diode(
     if postscript:
         sim.options = Options(postscript=True)
 
+    check_mesh_size(nx, ny, "create_pn_diode")
+
     # Compute junction boundaries
     junction_x = junction_position * length           # P-I (or P-N) boundary
     intrinsic_end = junction_x + intrinsic_width      # I-N boundary (== junction_x when PN)
 
-    # Mesh with refinement near junction(s)
-    sim.mesh = Mesh(nx=nx, ny=ny, width=width, outfile="mesh")
+    # Mesh with refinement near junction(s).
+    # width= is the z-depth (current scaling), not the y extent.
+    sim.mesh = Mesh(nx=nx, ny=ny, width=device_z_width, outfile="mesh")
 
     if is_pin:
         # Place roughly equal mesh density in each region; refine at both junctions
@@ -251,6 +262,8 @@ def create_pn_diode(
             or log_bands_eq or log_physics_at is not None):
         # Always start with equilibrium solve
         sim.add_solve(Solve(initial=True, outfile="eq"))
+        n_prior = 1     # solutions computed so far
+        v_sweep = 0.0   # last solved bias on the sweep electrode
 
         # Log equilibrium band diagram if requested
         if log_bands_eq:
@@ -271,26 +284,30 @@ def create_pn_diode(
             sim.log_physics("eq", **_cut)
 
             # Step through remaining bias points one at a time
+            # (the first step after INIT must use PREV, not PROJ)
             v_prev = 0.0
             for v in log_physics_at[1:]:
                 dv  = v - v_prev
                 tag = f"v{v:.1f}".replace(".", "p")   # e.g. "v0p2"
-                solve_kwargs = dict(project=True, vstep=dv, nsteps=1,
+                solve_kwargs = dict(**solve_guess(n_prior),
+                                    vstep=dv, nsteps=1,
                                     electrode=sweep_electrode, outfile=f"sol_{tag}")
                 if sweep_electrode == 1:
                     solve_kwargs["v1"] = v_prev
                 else:
                     solve_kwargs["v2"] = v_prev
                 sim.add_solve(Solve(**solve_kwargs))
+                n_prior += 2
                 sim.log_physics(tag, **_cut)
                 v_prev = v
+            v_sweep = v_prev
 
         # Forward bias sweep (skipped when log_physics_at is used)
         elif forward_sweep is not None:
             v_start, v_end, v_step = forward_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
             sim.add_solve(Solve(
-                project=True,
+                **solve_guess(n_prior),
                 v1=v_start if sweep_electrode == 1 else 0.0,
                 v2=v_start if sweep_electrode == 2 else 0.0,
                 vstep=v_step,
@@ -298,6 +315,8 @@ def create_pn_diode(
                 electrode=sweep_electrode,
                 outfile="fwd"
             ))
+            n_prior += nsteps + 1
+            v_sweep = v_start + v_step * nsteps
             if log_bands_bias:
                 sim.log_band_diagram(
                     outfile_prefix="fwd",
@@ -310,8 +329,20 @@ def create_pn_diode(
         if reverse_sweep is not None:
             v_start, v_end, v_step = reverse_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
+
+            # A previous sweep left the diode at a different bias: ramp
+            # back to the reverse-sweep start instead of jumping.  The
+            # ramp retraces already-logged forward bias points, so the
+            # I-V data is unaffected apart from duplicates.
+            if abs(v_start - v_sweep) > 1e-10:
+                n_prior = add_bias_ramp(sim, sweep_electrode, v_sweep,
+                                        v_start, n_prior,
+                                        max_step=GATE_STEP,
+                                        outfile="rev_ramp")
+                v_sweep = v_start
+
             sim.add_solve(Solve(
-                project=True,
+                **solve_guess(n_prior),
                 v1=v_start if sweep_electrode == 1 else 0.0,
                 v2=v_start if sweep_electrode == 2 else 0.0,
                 vstep=v_step,
@@ -319,6 +350,8 @@ def create_pn_diode(
                 electrode=sweep_electrode,
                 outfile="rev"
             ))
+            n_prior += nsteps + 1
+            v_sweep = v_start + v_step * nsteps
             if log_bands_bias:
                 sim.log_band_diagram(
                     outfile_prefix="rev",

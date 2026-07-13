@@ -7,6 +7,7 @@ Orchestrates all components to build and run PADRE simulations.
 import os
 import subprocess
 import tempfile
+import warnings
 from typing import List, Optional, Union, Any
 from pathlib import Path
 
@@ -798,6 +799,33 @@ class Simulation:
         self._preamble.append(Comment(text))
         return self
 
+    def _check_solve_sequence(self) -> None:
+        """
+        Warn about SOLVE cards whose initial guess cannot work.
+
+        PADRE's ``PROJ`` guess extrapolates from the two most recent
+        solutions; a ``SOLVE PROJ`` with fewer than two prior solutions
+        (e.g. directly after ``SOLVE INIT``) is invalid.  The first bias
+        solve after INIT must use ``PREV``.
+        """
+        n_solutions = 0
+        for cmd in self._commands:
+            if isinstance(cmd, Load):
+                # A loaded solution can serve as a previous solution
+                n_solutions = max(n_solutions, 1)
+            if not isinstance(cmd, Solve):
+                continue
+            if cmd.project and n_solutions < 2:
+                warnings.warn(
+                    f"SOLVE PROJ requires two prior solutions but only "
+                    f"{n_solutions} exist(s) at that point in the deck; "
+                    f"use previous=True for the first bias solve after "
+                    f"the initial solve.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            n_solutions += (cmd.nsteps or 0) + 1
+
     def generate_deck(self) -> str:
         """
         Generate the complete PADRE input deck.
@@ -807,6 +835,7 @@ class Simulation:
         str
             Complete PADRE input deck as a string
         """
+        self._check_solve_sequence()
         lines = []
 
         # Title

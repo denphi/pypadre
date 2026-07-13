@@ -37,8 +37,7 @@ Quick Start
 
    sim = create_mos_capacitor(
        oxide_thickness=0.005,       # 5 nm SiO2
-       silicon_thickness=0.05,
-       substrate_doping=1e17,
+       substrate_doping=1e17,       # silicon_thickness defaults to 5 um
        substrate_type="p",
        gate_type="n_poly",
        log_cv=True,

@@ -4,6 +4,13 @@ Python equivalent of mesfet.in for PADRE simulation.
 
 This script generates the same PADRE input deck as mesfet.in
 MESFET structure
+
+NOTE: this is a legacy deck-translation example, not a device
+recommendation. It reproduces an old hand-written deck verbatim: the
+61x51 mesh (3111 nodes) exceeds the ~2500-node limit of PADRE on
+nanoHUB, and the junction-isolated p-substrate differs from the
+semi-insulating substrate of the reference nanoHUB MESFET tool.
+For a physically representative MESFET use nanohubpadre.create_mesfet().
 """
 
 from nanohubpadre import (

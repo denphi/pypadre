@@ -23,6 +23,7 @@ from ..material import Material
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
+from ._common import check_mesh_size
 
 
 def create_solar_cell(
@@ -30,6 +31,7 @@ def create_solar_cell(
     emitter_depth: float = 0.5,
     base_thickness: float = 200.0,
     device_width: float = 1.0,
+    device_z_width: float = 1.0,
     # Mesh parameters
     nx: int = 3,
     ny: int = 100,
@@ -73,6 +75,11 @@ def create_solar_cell(
         Base (substrate) thickness in microns (default: 200.0)
     device_width : float
         Device width in microns (default: 1.0)
+    device_z_width : float
+        Depth of the device in the third dimension in microns (default:
+        1.0).  Terminal currents scale linearly with this value; increase
+        it (e.g. 1e4 for a 1 cm-deep strip) to lift solar-cell dark
+        currents above PADRE's floating-point noise floor.
     nx : int
         Mesh points in x direction (default: 3)
     ny : int
@@ -138,6 +145,7 @@ def create_solar_cell(
         "create_solar_cell() is experimental. "
         "PADRE cannot resolve solar-cell dark currents (I₀ ~ 10⁻²⁰ A) with the "
         "default 1 µm × 1 µm cross-section — IV log output will be numerical noise. "
+        "Increase device_z_width (e.g. 1e4 µm) to scale terminal currents up. "
         "Band diagrams and carrier profiles are still valid.",
         UserWarning,
         stacklevel=2,
@@ -148,7 +156,8 @@ def create_solar_cell(
     sim._device_type = "solar_cell"
     sim._device_kwargs = dict(
         emitter_depth=emitter_depth, base_thickness=base_thickness,
-        device_width=device_width, nx=nx, ny=ny, emitter_doping=emitter_doping,
+        device_width=device_width, device_z_width=device_z_width,
+        nx=nx, ny=ny, emitter_doping=emitter_doping,
         base_doping=base_doping, device_type=device_type,
         temperature=temperature, srh=srh, auger=auger, conmob=conmob,
         fldmob=fldmob, taun0=taun0, taup0=taup0,
@@ -161,9 +170,12 @@ def create_solar_cell(
 
     total_depth = emitter_depth + base_thickness
 
-    # Mesh with refinement in emitter and near junction
+    check_mesh_size(nx, ny, "create_solar_cell")
+
+    # Mesh with refinement in emitter and near junction.
+    # width= sets the z-depth: terminal currents scale with it.
     ny_emitter = int(ny * 0.3)  # 30% of mesh in emitter region
-    sim.mesh = Mesh(nx=nx, ny=ny)
+    sim.mesh = Mesh(nx=nx, ny=ny, width=device_z_width)
     sim.mesh.add_x_mesh(1, 0)
     sim.mesh.add_x_mesh(nx, device_width)
     sim.mesh.add_y_mesh(1, 0)
@@ -177,15 +189,18 @@ def create_solar_cell(
     sim.add_electrode(Electrode(1, ix_low=1, ix_high=nx, iy_low=1, iy_high=1))  # Front (emitter)
     sim.add_electrode(Electrode(2, ix_low=1, ix_high=nx, iy_low=ny, iy_high=ny))  # Back (base)
 
-    # Doping (Gaussian emitter, uniform base)
+    # Doping (Gaussian emitter, uniform base).  peak=0 pins the Gaussian
+    # maximum at the front surface so junction= yields the intended depth.
     if is_n_on_p:
         sim.add_doping(Doping(region=1, p_type=True, uniform=True, concentration=base_doping))
         sim.add_doping(Doping(region=1, n_type=True, gaussian=True,
-                              concentration=emitter_doping, junction=emitter_depth))
+                              concentration=emitter_doping,
+                              junction=emitter_depth, peak=0.0))
     else:
         sim.add_doping(Doping(region=1, n_type=True, uniform=True, concentration=base_doping))
         sim.add_doping(Doping(region=1, p_type=True, gaussian=True,
-                              concentration=emitter_doping, junction=emitter_depth))
+                              concentration=emitter_doping,
+                              junction=emitter_depth, peak=0.0))
 
     # Contacts with surface recombination
     sim.add_contact(Contact(number=1, neutral=True, surf_rec=True,
@@ -220,13 +235,14 @@ def create_solar_cell(
             )
 
         # Forward bias sweep for dark I-V characteristic
+        # (first solve after INIT must use PREV, not PROJ)
         if forward_sweep is not None:
             v_start, v_end, v_step = forward_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
 
             # Sweep voltage
             sim.add_solve(Solve(
-                project=True,
+                previous=True,
                 v1=v_start if sweep_electrode == 1 else None,
                 v2=v_start if sweep_electrode == 2 else None,
                 vstep=v_step,

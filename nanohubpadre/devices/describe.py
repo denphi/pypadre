@@ -17,7 +17,8 @@ DEVICE_PARAMS = {
         "groups": OrderedDict([
             ("Geometry", [
                 ("length", "float", 1.0, "um", "Total device length"),
-                ("width", "float", 1.0, "um", "Device width"),
+                ("width", "float", 1.0, "um", "Device width (y extent)"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
                 ("junction_position", "float", 0.5, "", "Junction position as fraction of length (0-1)"),
             ]),
             ("Mesh", [
@@ -62,25 +63,29 @@ DEVICE_PARAMS = {
         "factory": "create_mosfet",
         "groups": OrderedDict([
             ("Geometry", [
-                ("channel_length", "float", 0.025, "um", "Gate/channel length"),
-                ("gate_oxide_thickness", "float", 0.012, "um", "Gate oxide thickness"),
-                ("junction_depth", "float", 0.018, "um", "Source/drain junction depth"),
-                ("device_width", "float", 0.125, "um", "Total device width"),
-                ("device_depth", "float", 0.068, "um", "Substrate depth"),
+                ("channel_length", "float", 0.15, "um", "Gate/channel length"),
+                ("gate_oxide_thickness", "float", 0.002, "um", "Gate oxide thickness"),
+                ("junction_depth", "float", 0.02, "um", "Source/drain junction depth"),
+                ("device_width", "float", 0.25, "um", "Total device width"),
+                ("device_depth", "float", 0.05, "um", "Substrate depth"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
             ]),
             ("Mesh", [
-                ("nx", "int", 51, "", "Mesh points in x direction"),
-                ("ny", "int", 51, "", "Mesh points in y direction"),
+                ("nx", "int", 53, "", "Mesh points in x direction"),
+                ("ny", "int", 46, "", "Mesh points in y direction"),
             ]),
             ("Doping", [
-                ("channel_doping", "float", 1e19, "cm^-3", "Channel doping concentration"),
+                ("channel_doping", "float", 1e18, "cm^-3", "Channel doping concentration"),
                 ("substrate_doping", "float", 5e16, "cm^-3", "Substrate doping concentration"),
-                ("source_drain_doping", "float", 1e20, "cm^-3", "Source/drain doping concentration"),
+                ("source_drain_doping", "float", 2e20, "cm^-3", "Source/drain doping concentration"),
                 ("device_type", "str", "nmos", "", "Device type: 'nmos' or 'pmos'"),
             ]),
             ("Physical Models", [
                 ("temperature", "float", 300, "K", "Simulation temperature"),
                 ("bgn", "bool", True, "", "Band-gap narrowing"),
+                ("conmob", "bool", True, "", "Concentration-dependent mobility"),
+                ("fldmob", "bool", True, "", "Field-dependent mobility (velocity saturation)"),
+                ("gatmob", "bool", True, "", "Gate-field mobility degradation"),
                 ("carriers", "int", 1, "", "Number of carriers to solve (1 or 2)"),
             ]),
             ("Simulation Options", [
@@ -109,9 +114,10 @@ DEVICE_PARAMS = {
                 ("base_width", "float", 0.5, "um", "Base region width"),
                 ("collector_width", "float", 2.0, "um", "Collector region width"),
                 ("device_depth", "float", 1.0, "um", "Device depth"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
             ]),
             ("Mesh", [
-                ("nx", "int", 100, "", "Mesh points in x direction"),
+                ("nx", "int", 60, "", "Mesh points in x direction"),
                 ("ny", "int", 30, "", "Mesh points in y direction"),
             ]),
             ("Doping", [
@@ -119,6 +125,9 @@ DEVICE_PARAMS = {
                 ("base_doping", "float", 1e17, "cm^-3", "Base doping concentration"),
                 ("collector_doping", "float", 1e16, "cm^-3", "Collector doping concentration"),
                 ("device_type", "str", "npn", "", "Device type: 'npn' or 'pnp'"),
+                ("emitter_tau", "float", 1e-7, "s", "Emitter minority-carrier lifetime"),
+                ("base_tau", "float", 1e-6, "s", "Base minority-carrier lifetime"),
+                ("collector_tau", "float", 1e-7, "s", "Collector minority-carrier lifetime"),
             ]),
             ("Physical Models", [
                 ("temperature", "float", 300, "K", "Simulation temperature"),
@@ -127,6 +136,7 @@ DEVICE_PARAMS = {
                 ("bgn", "bool", True, "", "Band-gap narrowing"),
                 ("conmob", "bool", True, "", "Concentration-dependent mobility"),
                 ("fldmob", "bool", True, "", "Field-dependent mobility"),
+                ("surf_rec_contacts", "bool", True, "", "Reference-style surface-recombination contacts"),
             ]),
             ("Simulation Options", [
                 ("title", "str", None, "", "Simulation title"),
@@ -154,14 +164,16 @@ DEVICE_PARAMS = {
                 ("device_width", "float", 0.6, "um", "Total device width"),
                 ("channel_depth", "float", 0.2, "um", "Channel depth"),
                 ("substrate_depth", "float", 0.8, "um", "Substrate depth below channel"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
             ]),
             ("Mesh", [
-                ("nx", "int", 61, "", "Mesh points in x direction"),
-                ("ny", "int", 51, "", "Mesh points in y direction"),
+                ("nx", "int", 55, "", "Mesh points in x direction"),
+                ("ny", "int", 43, "", "Mesh points in y direction"),
             ]),
             ("Doping", [
                 ("channel_doping", "float", 1e17, "cm^-3", "Channel doping concentration"),
-                ("substrate_doping", "float", 1e17, "cm^-3", "Substrate doping concentration"),
+                ("substrate_doping", "float", 1e10, "cm^-3", "Substrate doping (semi-insulating default)"),
+                ("substrate_type", "str", "same", "", "Substrate type vs channel: 'same' or 'opposite'"),
                 ("contact_doping", "float", 1e20, "cm^-3", "Source/drain contact doping"),
                 ("device_type", "str", "n", "", "Channel type: 'n' or 'p'"),
             ]),
@@ -173,6 +185,7 @@ DEVICE_PARAMS = {
                 ("bgn", "bool", True, "", "Band-gap narrowing"),
                 ("conmob", "bool", True, "", "Concentration-dependent mobility"),
                 ("fldmob", "bool", True, "", "Field-dependent mobility"),
+                ("statistics", "str", "fermi", "", "Carrier statistics: 'fermi' or 'boltzmann'"),
             ]),
             ("Simulation Options", [
                 ("title", "str", None, "", "Simulation title"),
@@ -194,24 +207,25 @@ DEVICE_PARAMS = {
         "groups": OrderedDict([
             ("Geometry", [
                 ("oxide_thickness", "float", 0.002, "um", "Gate oxide thickness"),
-                ("silicon_thickness", "float", 0.03, "um", "Silicon substrate thickness"),
+                ("silicon_thickness", "float", 5.0, "um", "Silicon thickness (default 5.0 single-gate, 0.03 double-gate)"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; capacitances scale with it"),
                 ("device_width", "float", 1.0, "um", "Device width"),
             ]),
             ("Mesh", [
-                ("ny_oxide", "int", 10, "", "Mesh points in oxide layer"),
-                ("ny_silicon", "int", 20, "", "Mesh points in silicon"),
+                ("ny_oxide", "int", 100, "", "Mesh points in oxide layer"),
+                ("ny_silicon", "int", 200, "", "Mesh points in silicon"),
                 ("nx", "int", 3, "", "Mesh points in x direction"),
             ]),
             ("Doping", [
-                ("substrate_doping", "float", 1e18, "cm^-3", "Substrate doping concentration"),
+                ("substrate_doping", "float", 1e16, "cm^-3", "Substrate doping concentration"),
                 ("substrate_type", "str", "p", "", "Substrate doping type: 'p' or 'n'"),
             ]),
             ("Material", [
                 ("oxide_permittivity", "float", 3.9, "", "Relative permittivity of oxide"),
                 ("oxide_qf", "float", 0, "cm^-3", "Fixed bulk charge density in oxide"),
                 ("oxide_qftrap", "float", 0, "cm^-2", "Interface trap charge density at oxide-Si interface"),
-                ("taun0", "float", 1e-6, "s", "Electron minority carrier lifetime"),
-                ("taup0", "float", 1e-6, "s", "Hole minority carrier lifetime"),
+                ("taun0", "float", 1e-9, "s", "Electron minority carrier lifetime"),
+                ("taup0", "float", 1e-9, "s", "Hole minority carrier lifetime"),
             ]),
             ("Contact", [
                 ("gate_type", "str", "n_poly", "", "Top gate type: 'n_poly', 'p_poly', 'aluminum', 'tungsten', or 'metal'"),
@@ -254,7 +268,8 @@ DEVICE_PARAMS = {
         "groups": OrderedDict([
             ("Geometry", [
                 ("length", "float", 2.0, "um", "Device length"),
-                ("width", "float", 1.0, "um", "Device width"),
+                ("width", "float", 1.0, "um", "Device width (y extent)"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
             ]),
             ("Mesh", [
                 ("nx", "int", 100, "", "Mesh points in x direction"),
@@ -267,7 +282,9 @@ DEVICE_PARAMS = {
             ("Contact", [
                 ("workfunction", "float", 4.8, "V", "Metal workfunction"),
                 ("barrier_lowering", "bool", False, "", "Image-force barrier lowering"),
-                ("surf_rec", "bool", False, "", "Surface recombination at contact"),
+                ("surf_rec", "bool", True, "", "Thermionic-emission boundary (finite surface recombination)"),
+                ("vsurfn", "float", 2.2e6, "cm/s", "Electron thermionic surface recombination velocity"),
+                ("vsurfp", "float", 1.9e6, "cm/s", "Hole thermionic surface recombination velocity"),
             ]),
             ("Physical Models", [
                 ("temperature", "float", 300, "K", "Simulation temperature"),
@@ -298,6 +315,7 @@ DEVICE_PARAMS = {
                 ("emitter_depth", "float", 0.5, "um", "Emitter junction depth"),
                 ("base_thickness", "float", 200.0, "um", "Base (substrate) thickness"),
                 ("device_width", "float", 1.0, "um", "Device width"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
             ]),
             ("Mesh", [
                 ("nx", "int", 3, "", "Mesh points in x direction"),

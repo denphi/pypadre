@@ -1140,7 +1140,7 @@ class OutputManager:
                 y = c / cox_val if normalize and cox_val else c
                 ax.plot(vg, y, color=colors[i % len(colors)], linewidth=2, label=label)
             ax.set_xlabel('Gate Voltage Vg (V)')
-            ax.set_ylabel('C/Cox' if normalize else 'Capacitance (F)')
+            ax.set_ylabel('C/Cox' if normalize else 'Capacitance (F/µm)')
             ax.set_title(title)
             ax.legend()
             ax.grid(True, alpha=0.3)
@@ -1157,7 +1157,7 @@ class OutputManager:
             fig.update_layout(
                 title=title,
                 xaxis_title='Gate Voltage Vg (V)',
-                yaxis_title='C/Cox' if normalize else 'Capacitance (F)',
+                yaxis_title='C/Cox' if normalize else 'Capacitance (F/µm)',
                 template='plotly_white',
                 width=kwargs.get('width', 700),
                 height=kwargs.get('height', 450),

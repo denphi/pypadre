@@ -452,14 +452,20 @@ class IVData:
     """
     Parsed I-V data from PADRE log file (ivfile).
 
+    Units: PADRE solves a 2D cross-section, so terminal currents are in
+    amperes **per micron of device depth**, scaled by the mesh ``width=``
+    parameter (default 1 µm).  Multiply by the physical device depth in
+    microns to obtain absolute amperes.
+
     Attributes
     ----------
     num_electrodes : int
         Number of electrodes in the simulation
     bias_points : List[dict]
         List of bias point data, each containing:
-        - voltages: dict mapping electrode number to voltage
+        - voltages: dict mapping electrode number to voltage (V)
         - currents: dict mapping electrode number to current components
+          (A per µm of depth, times the mesh ``width``)
     """
     num_electrodes: int = 0
     bias_points: List[Dict] = field(default_factory=list)
@@ -882,7 +888,7 @@ class IVData:
             return _plot_multi_iv_matplotlib(
                 data_series,
                 xlabel="Base-Emitter Voltage Vbe (V)",
-                ylabel="Current (A)",
+                ylabel="Current (A/µm)",
                 title=title,
                 log_scale=log_scale,
                 show=show,
@@ -892,7 +898,7 @@ class IVData:
             return _plot_multi_iv_plotly(
                 data_series,
                 xlabel="Base-Emitter Voltage Vbe (V)",
-                ylabel="Current (A)",
+                ylabel="Current (A/µm)",
                 title=title,
                 log_scale=log_scale,
                 show=show,
@@ -1224,6 +1230,11 @@ def parse_iv_content(content: str) -> IVData:
 class ACData:
     """
     Parsed AC analysis data from PADRE acfile.
+
+    Units: PADRE solves a 2D cross-section, so capacitances are in farads
+    **per micron of device depth** (times the mesh ``width=`` parameter,
+    default 1 µm) and conductances in siemens per micron of depth.
+    Multiply by the physical device depth in microns for absolute values.
     """
     frequency: np.ndarray = field(default_factory=lambda: np.array([]))
     voltages: Dict[int, np.ndarray] = field(default_factory=dict)

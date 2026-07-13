@@ -2,7 +2,9 @@
 MOS Capacitor factory function.
 """
 
+import warnings
 from typing import Optional, Tuple
+from ..estimates import max_depletion_width_um
 from ..simulation import Simulation
 from ..mesh import Mesh
 from ..region import Region
@@ -14,27 +16,29 @@ from ..material import Material
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
+from ._common import check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP
 
 
 def create_mos_capacitor(
     # Geometry parameters
     oxide_thickness: float = 0.002,
-    silicon_thickness: float = 0.03,
+    silicon_thickness: Optional[float] = None,
     device_width: float = 1.0,
+    device_z_width: float = 1.0,
     # Mesh parameters
     ny_oxide: int = 100,
     ny_silicon: int = 200,
     nx: int = 3,
     # Doping parameters
-    substrate_doping: float = 1e18,
+    substrate_doping: float = 1e16,
     substrate_type: str = "p",
     # Material parameters
     oxide_permittivity: float = 3.9,
     oxide_qf: float = 0,
     oxide_qftrap: float = 0,
     # Carrier lifetimes
-    taun0: float = 1e-6,
-    taup0: float = 1e-6,
+    taun0: float = 1e-9,
+    taup0: float = 1e-9,
     # Physical models
     temperature: float = 300,
     conmob: bool = True,
@@ -74,10 +78,18 @@ def create_mos_capacitor(
     ----------
     oxide_thickness : float
         Gate oxide thickness in microns (default: 0.002 = 2nm)
-    silicon_thickness : float
-        Silicon substrate thickness in microns (default: 0.03)
+    silicon_thickness : float, optional
+        Silicon substrate thickness in microns. Defaults to 5.0 for
+        single-gate (matching the nanoHUB reference tool) and 0.03 for
+        double-gate (thin body). For single-gate it must comfortably
+        exceed the maximum depletion width for the chosen doping or the
+        back contact clips the depletion region and distorts the C-V
+        minimum; a warning is emitted when silicon_thickness < 2×Wd,max.
     device_width : float
         Device width in microns (default: 1.0)
+    device_z_width : float
+        Depth of the device in the third dimension in microns (default:
+        1.0). Capacitances scale linearly with this value.
     ny_oxide : int
         Mesh points in oxide layer (default: 100)
     ny_silicon : int
@@ -85,7 +97,7 @@ def create_mos_capacitor(
     nx : int
         Mesh points in x direction (default: 3)
     substrate_doping : float
-        Substrate doping concentration in cm^-3 (default: 1e18)
+        Substrate doping concentration in cm^-3 (default: 1e16)
     substrate_type : str
         Substrate doping type: "p" or "n" (default: "p")
     oxide_permittivity : float
@@ -96,10 +108,13 @@ def create_mos_capacitor(
         Interface trap charge density at oxide-semiconductor interface in cm^-2
         (default: 0). Shifts the flat-band voltage.
     taun0 : float
-        Electron minority carrier lifetime in seconds (default: 1e-6 = 1 µs).
-        Smaller values improve low-frequency C-V accuracy.
+        Electron minority carrier lifetime in seconds (default: 1e-9,
+        matching the reference tool). Short lifetimes let the inversion
+        layer respond during the sweep so the HF curve saturates at Cmin
+        instead of drifting into deep depletion, and the LF curve reaches
+        equilibrium inversion.
     taup0 : float
-        Hole minority carrier lifetime in seconds (default: 1e-6 = 1 µs).
+        Hole minority carrier lifetime in seconds (default: 1e-9).
     temperature : float
         Simulation temperature in Kelvin (default: 300)
     conmob : bool
@@ -185,11 +200,14 @@ def create_mos_capacitor(
     ... )
     """
     is_double = gate_config.lower() == "double"
+    if silicon_thickness is None:
+        silicon_thickness = 0.03 if is_double else 5.0
     sim = Simulation(title=title or ("Double-Gate MOS Capacitor" if is_double else "MOS Capacitor"))
     sim._device_type = "mos_capacitor"
     sim._device_kwargs = dict(
         oxide_thickness=oxide_thickness, silicon_thickness=silicon_thickness,
-        device_width=device_width, ny_oxide=ny_oxide, ny_silicon=ny_silicon,
+        device_width=device_width, device_z_width=device_z_width,
+        ny_oxide=ny_oxide, ny_silicon=ny_silicon,
         nx=nx, substrate_doping=substrate_doping, substrate_type=substrate_type,
         oxide_permittivity=oxide_permittivity, oxide_qf=oxide_qf,
         oxide_qftrap=oxide_qftrap, taun0=taun0, taup0=taup0,
@@ -207,6 +225,21 @@ def create_mos_capacitor(
         ac_frequency_lf=ac_frequency_lf,
     )
 
+    # Warn when the silicon body cannot contain the depletion region:
+    # the ohmic back contact would clip it and distort the C-V minimum.
+    wd_max_um = max_depletion_width_um(substrate_doping, temperature)
+    if not is_double and silicon_thickness < 2 * wd_max_um:
+        warnings.warn(
+            f"create_mos_capacitor: silicon_thickness={silicon_thickness} µm "
+            f"is less than twice the maximum depletion width "
+            f"(Wd,max ≈ {wd_max_um:.3f} µm at {substrate_doping:.1e} cm^-3). "
+            f"The back contact will truncate the depletion region and "
+            f"distort the C-V curve; increase silicon_thickness or the "
+            f"doping.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     if is_double:
         # Double-gate mesh mirrors Rappture's 4-segment approach:
         #   top oxide → silicon (expanding) → silicon (compressing) → back oxide
@@ -219,7 +252,8 @@ def create_mos_capacitor(
         ny_si_mid   = ny_oxide + ny_si_half  # silicon midplane
         ny_si_end   = ny_oxide + ny_silicon  # silicon-back oxide boundary
 
-        sim.mesh = Mesh(nx=nx, ny=total_ny)
+        sim.mesh = Mesh(nx=nx, ny=total_ny,
+                        width=None if device_z_width == 1.0 else device_z_width)
         sim.mesh.add_y_mesh(1, 0, ratio=1)
         sim.mesh.add_y_mesh(ny_oxide, oxide_thickness, ratio=0.9)
         sim.mesh.add_y_mesh(ny_si_mid, oxide_thickness + silicon_thickness / 2, ratio=1.1)
@@ -237,12 +271,15 @@ def create_mos_capacitor(
         ny_mid_oxide = max(1, ny_oxide // 2)
         near_end = oxide_thickness + near_interface_width
 
-        sim.mesh = Mesh(nx=nx, ny=total_ny)
+        sim.mesh = Mesh(nx=nx, ny=total_ny,
+                        width=None if device_z_width == 1.0 else device_z_width)
         sim.mesh.add_y_mesh(1, 0)
         sim.mesh.add_y_mesh(ny_mid_oxide, oxide_thickness / 2, ratio=1)
         sim.mesh.add_y_mesh(ny_oxide, oxide_thickness, ratio=0.8)
         sim.mesh.add_y_mesh(ny_oxide + ny_near, near_end, ratio=1)
         sim.mesh.add_y_mesh(total_ny, total_thickness, ratio=1.05)
+
+    check_mesh_size(nx, total_ny, "create_mos_capacitor")
 
     sim.mesh.add_x_mesh(1, 0.001)
     sim.mesh.add_x_mesh(nx, device_width, ratio=1)
@@ -336,6 +373,8 @@ def create_mos_capacitor(
     if needs_solve:
         # Always start with equilibrium solve
         sim.add_solve(Solve(initial=True, outfile="eq"))
+        n_prior = 1        # solutions computed so far
+        v_gate = 0.0       # last solved gate bias
 
         # Equilibrium band diagram
         if log_bands_eq or log_qf_eq:
@@ -360,8 +399,17 @@ def create_mos_capacitor(
             v_start, v_end, v_step = vg_sweep
             nsteps = int(abs(v_end - v_start) / abs(v_step))
 
+            # Ramp the gate to the sweep starting voltage first — the
+            # reference deck never jumps to the start bias in one solve.
+            # Ramp solves carry no AC card, so they leave the AC log clean.
+            if abs(v_start - v_gate) > 1e-10:
+                n_prior = add_bias_ramp(sim, 1, v_gate, v_start, n_prior,
+                                        max_step=GATE_STEP,
+                                        outfile="vg_ramp")
+                v_gate = v_start
+
             sim.add_solve(Solve(
-                project=True,
+                **solve_guess(n_prior),
                 v1=v_start,
                 vstep=v_step,
                 nsteps=nsteps,
@@ -371,6 +419,8 @@ def create_mos_capacitor(
                 outfile="cv",
                 save=1 if (log_bands_bias or log_profiles_bias) else None,
             ))
+            n_prior += nsteps + 1
+            v_gate = v_start + v_step * nsteps
 
             if log_bands_bias or log_qf_bias:
                 sim.log_band_diagram(
@@ -388,12 +438,19 @@ def create_mos_capacitor(
                 sim.log_efield("ef_bias", x_start=x_mid, x_end=x_mid,
                                y_start=0.0, y_end=total_thickness)
 
-            # Low-frequency C-V: issue a new log command to redirect output,
-            # then repeat the sweep at the low frequency
+            # Low-frequency C-V: ramp the gate back to the sweep start
+            # (the HF sweep left it at v_end — never jump the full range
+            # in one solve), redirect the AC log, then repeat the sweep
+            # at the low frequency.
             if log_cv_lf:
+                if abs(v_start - v_gate) > 1e-10:
+                    n_prior = add_bias_ramp(sim, 1, v_gate, v_start, n_prior,
+                                            max_step=GATE_STEP,
+                                            outfile="vg_ramp_lf")
+                    v_gate = v_start
                 sim.add_log(Log(acfile=cv_lf_file))
                 sim.add_solve(Solve(
-                    project=True,
+                    **solve_guess(n_prior),
                     v1=v_start,
                     vstep=v_step,
                     nsteps=nsteps,
@@ -402,6 +459,8 @@ def create_mos_capacitor(
                     frequency=ac_frequency_lf,
                     outfile="cv_lf",
                 ))
+                n_prior += nsteps + 1
+                v_gate = v_start + v_step * nsteps
 
     return sim
 

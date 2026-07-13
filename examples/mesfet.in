@@ -1,3 +1,6 @@
+$ LEGACY EXAMPLE: 61x51 = 3111 nodes exceeds the ~2500-node nanoHUB limit,
+$ and the p-type substrate differs from the reference tool (semi-insulating).
+$ Kept verbatim as a deck-translation example; see nanohubpadre.create_mesfet().
 MESH RECT NX=61 NY=51
 
 X.M N=1  LOC=0     RATIO=1.1

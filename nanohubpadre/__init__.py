@@ -63,6 +63,9 @@ from .devices import (
 # Environment loading (use command)
 from .use import use, load_padre, list_available_modules
 
+# Analytic first-order estimates (sweep-range / geometry sanity checks)
+from .estimates import estimate_mosfet_vt, max_depletion_width_um
+
 # Visualization functions
 from .visualization import (
     plot_iv,
@@ -147,6 +150,9 @@ __all__ = [
     "use",
     "load_padre",
     "list_available_modules",
+    # Analytic estimates
+    "estimate_mosfet_vt",
+    "max_depletion_width_um",
     # Visualization
     "plot_iv",
     "plot_transfer_characteristic",
