@@ -46,8 +46,12 @@ Issues = "https://github.com/nanohub/padre/issues"
 [tool.setuptools.dynamic]
 version = {attr = "nanohubpadre._version.__version__"}
 
-[tool.setuptools.packages.find]
-include = ["nanohubpadre*"]
+# Explicit package list (do NOT use packages.find): the repo root contains
+# symlinks to sibling projects (nanohub-mcp, padre-web) with ~130k files of
+# node_modules/build output. find_packages() follows those symlinks and the
+# tree walk hangs for minutes. Listing packages explicitly avoids the walk.
+[tool.setuptools]
+packages = ["nanohubpadre", "nanohubpadre.devices"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
