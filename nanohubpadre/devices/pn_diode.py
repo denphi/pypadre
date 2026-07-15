@@ -51,7 +51,7 @@ def create_pn_diode(
     # Voltage sweep options
     forward_sweep: Optional[Tuple[float, float, float]] = None,
     reverse_sweep: Optional[Tuple[float, float, float]] = None,
-    sweep_electrode: int = 2,
+    sweep_electrode: int = 1,
     # Physics-profile logging
     log_physics_at: Optional[List[float]] = None,
 ) -> Simulation:
@@ -122,7 +122,9 @@ def create_pn_diode(
         If provided, adds a reverse bias voltage sweep.
         Example: (0.0, -5.0, -0.5) sweeps from 0V to -5V in 0.5V steps
     sweep_electrode : int
-        Electrode number to apply voltage sweeps (default: 2)
+        Electrode number to apply voltage sweeps (default: 1 = P side /
+        anode, so a positive forward_sweep forward-biases the junction;
+        2 = N side / cathode)
     log_physics_at : list of float, optional
         Bias voltages (V) at which to capture physics profiles along the
         device: recombination rate, electric field, electron density, hole

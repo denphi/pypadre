@@ -53,7 +53,7 @@ DEVICE_PARAMS = {
             ("Voltage Sweep", [
                 ("forward_sweep", "tuple", None, "V", "Forward bias sweep (v_start, v_end, v_step)"),
                 ("reverse_sweep", "tuple", None, "V", "Reverse bias sweep (v_start, v_end, v_step)"),
-                ("sweep_electrode", "int", 2, "", "Electrode for voltage sweeps"),
+                ("sweep_electrode", "int", 1, "", "Electrode for voltage sweeps (1 = P side/anode)"),
                 ("log_physics_at", "list", None, "V", "Bias points for physics profiles (must start at 0.0)"),
             ]),
         ]),
