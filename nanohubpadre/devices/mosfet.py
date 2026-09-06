@@ -17,7 +17,8 @@ from ..solver import System, Solve
 from ..log import Log
 from ..plot3d import Plot3D
 from ._common import (
-    check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP, DRAIN_STEP,
+    check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP, DRAIN_STEP, sweep_steps,
+    contract_ratio, expand_ratio,
 )
 
 
@@ -230,11 +231,29 @@ def create_mosfet(
     # uses r=0.87 then r=0.7); the oxide expands away from the interface.
     ny_jsplit = ny_sub + max(1, ny_junc // 2)
     y_jsplit = device_depth + 0.6 * junction_depth
+
+    # The grading ratios are computed from a target interface cell size
+    # rather than fixed.  Fixed 0.875-then-0.7 compounded over ~17 intervals
+    # to h_min = 8e-6 um (0.08 A, sub-atomic) at the Si/SiO2 interface, and
+    # PADRE then stalled the drain sweep at Vd ~ 0.09 V of a requested 1.5 V.
+    h_int = max(min(gate_oxide_thickness / 4.0, junction_depth / 20.0), 2e-4)
+    n_jsp = ny_jsplit - ny_sub
+    n_int = (ny_sub + ny_junc) - ny_jsplit
+    n_ox = ny - (ny_sub + ny_junc)
     sim.mesh.add_y_mesh(1, 0)
-    sim.mesh.add_y_mesh(ny_sub, device_depth, ratio=0.8)
-    sim.mesh.add_y_mesh(ny_jsplit, y_jsplit, ratio=0.875)
-    sim.mesh.add_y_mesh(ny_sub + ny_junc, device_depth + junction_depth, ratio=0.7)
-    sim.mesh.add_y_mesh(ny, total_height, ratio=1.25)
+    sim.mesh.add_y_mesh(ny_sub, device_depth,
+                        ratio=min(contract_ratio(device_depth, ny_sub - 1,
+                                                 h_int * 8), 0.95))
+    sim.mesh.add_y_mesh(ny_jsplit, y_jsplit,
+                        ratio=min(contract_ratio(y_jsplit - device_depth,
+                                                 n_jsp, h_int * 2), 0.98))
+    sim.mesh.add_y_mesh(ny_sub + ny_junc, device_depth + junction_depth,
+                        ratio=min(contract_ratio(
+                            device_depth + junction_depth - y_jsplit,
+                            n_int, h_int), 0.95))
+    sim.mesh.add_y_mesh(ny, total_height,
+                        ratio=max(expand_ratio(gate_oxide_thickness, n_ox, h_int),
+                                  1.05))
 
     # Regions
     # Substrate
@@ -336,7 +355,8 @@ def create_mosfet(
         # Transfer characteristic (Id-Vg at fixed Vd)
         if vgs_sweep is not None:
             v_start, v_end, v_step = vgs_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_mosfet vgs_sweep")
 
             # Ramp drain to the operating bias (never a single jump)
             if abs(vds) > 1e-10:
@@ -365,7 +385,7 @@ def create_mosfet(
                 outfile="idvg"
             ))
             n_prior += nsteps + 1
-            bias[3] = v_start + v_step * nsteps
+            bias[3] = v_final
 
             if log_bands_bias:
                 x_mid = device_width / 2.0
@@ -379,7 +399,8 @@ def create_mosfet(
         # Output characteristic (Id-Vd at fixed Vg)
         if vds_sweep is not None:
             v_start, v_end, v_step = vds_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_mosfet vds_sweep")
 
             # Ramp gate to the operating bias if not already in transfer mode
             if vgs_sweep is None and abs(vgs) > 1e-10:
@@ -407,7 +428,7 @@ def create_mosfet(
                 outfile="idvd"
             ))
             n_prior += nsteps + 1
-            bias[2] = v_start + v_step * nsteps
+            bias[2] = v_final
 
             if log_bands_bias:
                 x_mid = device_width / 2.0

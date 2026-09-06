@@ -294,8 +294,15 @@ class TestSolveSequencing:
         """LOG must come after the ramp solves, right before the sweep."""
         deck = create_mosfet(log_iv=True, vgs_sweep=(0.0, 1.5, 0.1),
                              vds=0.5).generate_deck().lower()
-        lines = [l for l in deck.splitlines()
-                 if l.startswith(("solve", "log"))]
+        # Join PADRE continuation lines ("+   ...") back onto their command
+        # before filtering, or a long SOLVE hides its own outf=.
+        joined = []
+        for raw in deck.splitlines():
+            if raw.startswith("+") and joined:
+                joined[-1] += " " + raw.lstrip("+ ").strip()
+            else:
+                joined.append(raw)
+        lines = [l for l in joined if l.startswith(("solve", "log"))]
         log_idx = next(i for i, l in enumerate(lines) if l.startswith("log"))
         # everything before the log is init/ramp; the sweep follows the log
         assert any("vd_set" in l for l in lines[:log_idx])

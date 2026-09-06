@@ -16,7 +16,8 @@ from ..material import Material
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
-from ._common import check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP
+from ._common import (check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP,
+                      sweep_steps, expand_ratio)
 
 
 def create_mos_capacitor(
@@ -26,7 +27,7 @@ def create_mos_capacitor(
     device_width: float = 1.0,
     device_z_width: float = 1.0,
     # Mesh parameters
-    ny_oxide: int = 100,
+    ny_oxide: int = 12,
     ny_silicon: int = 200,
     nx: int = 3,
     # Doping parameters
@@ -265,19 +266,35 @@ def create_mos_capacitor(
         # and a bulk zone (ny_silicon nodes), giving total = ny_oxide + ny_silicon nodes.
         # Cap the near-interface width at 10% of silicon thickness for thin bodies.
         near_interface_width = min(0.02, silicon_thickness * 0.1)
-        ny_near = ny_oxide           # same count as oxide nodes (Rappture convention)
+        # The near-interface zone resolves the inversion layer, so it gets a
+        # share of the silicon nodes rather than being tied to the oxide
+        # count.  Previously ny_near = ny_oxide = 100 put 100 lines across a
+        # 2 nm oxide (0.02 nm cells) and, with RATIO=0.8 compounding over 50
+        # intervals, drove the smallest cell to 3.6e-9 um -- 3.6 femtometres.
+        ny_near = max(8, min(ny_silicon // 4, ny_silicon - 4))
         total_ny = ny_oxide + ny_silicon
         total_thickness = oxide_thickness + silicon_thickness
         ny_mid_oxide = max(1, ny_oxide // 2)
         near_end = oxide_thickness + near_interface_width
 
+        h_ox = oxide_thickness / max(ny_oxide - 1, 1)
+        h_near = near_interface_width / max(ny_near, 1)
+        if h_ox < 1e-4:
+            warnings.warn(
+                f"create_mos_capacitor: ny_oxide={ny_oxide} puts {h_ox * 1e4:.3g} A "
+                f"cells across a {oxide_thickness * 1e4:.1f} A oxide, below atomic "
+                f"scale. Reduce ny_oxide.", UserWarning, stacklevel=2)
+
         sim.mesh = Mesh(nx=nx, ny=total_ny,
                         width=None if device_z_width == 1.0 else device_z_width)
         sim.mesh.add_y_mesh(1, 0)
         sim.mesh.add_y_mesh(ny_mid_oxide, oxide_thickness / 2, ratio=1)
-        sim.mesh.add_y_mesh(ny_oxide, oxide_thickness, ratio=0.8)
+        sim.mesh.add_y_mesh(ny_oxide, oxide_thickness, ratio=1)
         sim.mesh.add_y_mesh(ny_oxide + ny_near, near_end, ratio=1)
-        sim.mesh.add_y_mesh(total_ny, total_thickness, ratio=1.05)
+        sim.mesh.add_y_mesh(total_ny, total_thickness,
+                            ratio=max(expand_ratio(
+                                silicon_thickness - near_interface_width,
+                                total_ny - ny_oxide - ny_near, h_near), 1.02))
 
     check_mesh_size(nx, total_ny, "create_mos_capacitor")
 
@@ -397,7 +414,8 @@ def create_mos_capacitor(
         # Gate voltage sweep — high-frequency C-V
         if vg_sweep is not None:
             v_start, v_end, v_step = vg_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_mos_capacitor vg_sweep")
 
             # Ramp the gate to the sweep starting voltage first — the
             # reference deck never jumps to the start bias in one solve.
@@ -420,7 +438,7 @@ def create_mos_capacitor(
                 save=1 if (log_bands_bias or log_profiles_bias) else None,
             ))
             n_prior += nsteps + 1
-            v_gate = v_start + v_step * nsteps
+            v_gate = v_final
 
             if log_bands_bias or log_qf_bias:
                 sim.log_band_diagram(
@@ -460,7 +478,7 @@ def create_mos_capacitor(
                     outfile="cv_lf",
                 ))
                 n_prior += nsteps + 1
-                v_gate = v_start + v_step * nsteps
+                v_gate = v_final
 
     return sim
 

@@ -39,6 +39,7 @@ from .parser import (
 # Device factory functions
 from .devices import (
     create_pn_diode,
+    create_nin_diode,
     create_mos_capacitor,
     create_mosfet,
     create_mesfet,
@@ -47,6 +48,8 @@ from .devices import (
     create_solar_cell,
     # Aliases
     pn_diode,
+    nin_diode,
+    pip_diode,
     mos_capacitor,
     mosfet,
     mesfet,
@@ -127,6 +130,7 @@ __all__ = [
     "IVData",
     # Device factory functions
     "create_pn_diode",
+    "create_nin_diode",
     "create_mos_capacitor",
     "create_mosfet",
     "create_mesfet",
@@ -135,6 +139,8 @@ __all__ = [
     "create_solar_cell",
     # Aliases
     "pn_diode",
+    "nin_diode",
+    "pip_diode",
     "mos_capacitor",
     "mosfet",
     "mesfet",

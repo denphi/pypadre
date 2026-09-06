@@ -58,6 +58,54 @@ DEVICE_PARAMS = {
             ]),
         ]),
     },
+    "nin_diode": {
+        "summary": "NIN / PIP Isotype Diode (unipolar, non-rectifying)",
+        "factory": "create_nin_diode",
+        "groups": OrderedDict([
+            ("Geometry", [
+                ("length", "float", 2.0, "um", "Total device length"),
+                ("width", "float", 1.0, "um", "Device width (y extent)"),
+                ("device_z_width", "float", 1.0, "um", "Depth in z; terminal currents scale with it"),
+                ("junction_position", "float", 0.3, "", "First contact/barrier interface as fraction of length"),
+                ("intrinsic_width", "float", 0.8, "um", "Width of the high-resistivity middle region"),
+            ]),
+            ("Mesh", [
+                ("nx", "int", 200, "", "Mesh points in x direction"),
+                ("ny", "int", 3, "", "Mesh points in y direction"),
+            ]),
+            ("Doping", [
+                ("contact_doping", "float", 1e18, "cm^-3", "Doping of the two heavily doped end regions"),
+                ("intrinsic_doping", "float", 1e14, "cm^-3", "Doping of the middle region (same polarity)"),
+                ("device_type", "str", "nin", "", "'nin' (electron transport) or 'pip' (hole transport)"),
+            ]),
+            ("Physical Models", [
+                ("temperature", "float", 300, "K", "Simulation temperature"),
+                ("srh", "bool", True, "", "Shockley-Read-Hall recombination"),
+                ("conmob", "bool", True, "", "Concentration-dependent mobility"),
+                ("fldmob", "bool", True, "", "Field-dependent mobility (needed for velocity saturation)"),
+                ("impact", "bool", False, "", "Impact ionization"),
+            ]),
+            ("Material", [
+                ("taun0", "float", 1e-7, "s", "Electron lifetime"),
+                ("taup0", "float", 1e-7, "s", "Hole lifetime"),
+            ]),
+            ("Simulation Options", [
+                ("title", "str", None, "", "Simulation title"),
+                ("postscript", "bool", False, "", "Enable PostScript output"),
+            ]),
+            ("Output Logging", [
+                ("log_iv", "bool", False, "", "Enable I-V logging"),
+                ("iv_file", "str", "iv", "", "I-V log filename"),
+                ("log_bands_eq", "bool", False, "", "Log band diagrams at equilibrium"),
+                ("log_bands_bias", "bool", False, "", "Log band diagrams during the sweep"),
+            ]),
+            ("Voltage Sweep", [
+                ("bias_sweep", "tuple", None, "V", "Bias sweep (v_start, v_end, v_step); use a symmetric range e.g. (-2, 2, 0.1)"),
+                ("sweep_electrode", "int", 1, "", "Electrode to sweep (1 = left, 2 = right)"),
+                ("log_physics_at", "list", None, "V", "Bias points for physics profiles (must start at 0.0)"),
+            ]),
+        ]),
+    },
     "mosfet": {
         "summary": "Metal-Oxide-Semiconductor FET",
         "factory": "create_mosfet",

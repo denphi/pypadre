@@ -215,6 +215,86 @@ def draw_pn_diode(length=1.0, width=1.0, junction_position=0.5,
     return _wrap_svg("\n".join(parts), width=620, height=top + dh + 80)
 
 
+
+def draw_nin_diode(length=2.0, width=1.0, junction_position=0.3,
+                   intrinsic_width=0.8, contact_doping=1e18,
+                   intrinsic_doping=1e14, device_type="nin",
+                   interactive=False, **kwargs):
+    """Draw NIN/PIP isotype diode cross-section based on user parameters."""
+    is_n = str(device_type).lower() == "nin"
+    label = "N" if is_n else "P"
+    fill = COLORS["n_light"] if is_n else COLORS["p_light"]
+    color = "#336699" if is_n else "#993333"
+
+    margin = 60
+    elec_h = 22
+    dw = 480
+    dh = 180
+    top = margin + elec_h + 5
+    left = margin
+
+    f1 = junction_position
+    f2 = min(1.0, junction_position + intrinsic_width / max(length, 1e-12))
+    x1 = left + dw * f1
+    x2 = left + dw * f2
+
+    parts = []
+    parts.append(_svg_text(left + dw / 2, 20,
+                           f"{label}I{label} Isotype Diode "
+                           f"(no junction - symmetric I-V)", size=16, bold=True))
+
+    # Heavily doped end regions
+    for a, b in ((left, x1), (x2, left + dw)):
+        parts.append(_svg_rect(a, top, b - a, dh, fill=fill, stroke=COLORS["border"]))
+        parts.append(_svg_text((a + b) / 2, top + dh / 2 - 10, label + "+",
+                               size=20, bold=True, color=color))
+        txt = _fmt_doping(contact_doping)
+        if interactive:
+            parts.append(_svg_param_label((a + b) / 2, top + dh / 2 + 15, txt,
+                                          "contact_doping", contact_doping,
+                                          size=11, color=color))
+        else:
+            parts.append(_svg_text((a + b) / 2, top + dh / 2 + 15, txt,
+                                   size=11, color=color))
+
+    # Lightly doped barrier
+    parts.append(_svg_rect(x1, top, x2 - x1, dh, fill="#F2F2F2",
+                           stroke=COLORS["border"]))
+    parts.append(_svg_text((x1 + x2) / 2, top + dh / 2 - 10,
+                           label + "-", size=20, bold=True, color="#666666"))
+    txt = _fmt_doping(intrinsic_doping)
+    if interactive:
+        parts.append(_svg_param_label((x1 + x2) / 2, top + dh / 2 + 15, txt,
+                                      "intrinsic_doping", intrinsic_doping,
+                                      size=11, color="#666666"))
+    else:
+        parts.append(_svg_text((x1 + x2) / 2, top + dh / 2 + 15, txt,
+                               size=11, color="#666666"))
+
+    # Isotype interfaces (not junctions - dashed grey, not red)
+    for x in (x1, x2):
+        parts.append(_svg_line(x, top, x, top + dh, color="#888888",
+                               width=2, dash=True))
+    parts.append(_svg_text((x1 + x2) / 2, top + dh + 15,
+                           "isotype interfaces (no depletion region)",
+                           size=10, color="#888888"))
+
+    parts.append(_svg_electrode(left, top - elec_h, 60, elec_h, "Contact 1"))
+    parts.append(_svg_electrode(left + dw - 60, top - elec_h, 60, elec_h, "Contact 2"))
+
+    _ip = interactive
+    parts.append(_svg_arrow_h(left, left + dw, top + dh + 35, label=_fmt_dim(length),
+                              param_name="length" if _ip else None, value=length))
+    parts.append(_svg_arrow_v(left + dw + 15, top, top + dh, label=_fmt_dim(width),
+                              side="right", param_name="width" if _ip else None,
+                              value=width))
+    parts.append(_svg_arrow_h(x1, x2, top + dh + 55, label=_fmt_dim(intrinsic_width),
+                              param_name="intrinsic_width" if _ip else None,
+                              value=intrinsic_width))
+
+    return _wrap_svg("\n".join(parts), width=620, height=top + dh + 80)
+
+
 def draw_mosfet(channel_length=0.15, gate_oxide_thickness=0.002,
                 junction_depth=0.02, device_width=0.25, device_depth=0.05,
                 channel_doping=1e18, substrate_doping=5e16,
@@ -794,6 +874,7 @@ def draw_pin_diode(length=2.0, width=1.0, p_width=0.5, i_width=1.0, n_width=0.5,
 
 _DRAW_FUNCTIONS = {
     "pn_diode": draw_pn_diode,
+    "nin_diode": draw_nin_diode,
     "pin_diode": draw_pin_diode,
     "mosfet": draw_mosfet,
     "bjt": draw_bjt,

@@ -15,7 +15,8 @@ from ..solver import System, Solve
 from ..log import Log
 from ..plot3d import Plot3D
 from ._common import (
-    check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP,
+    check_mesh_size, solve_guess, add_bias_ramp, GATE_STEP, sweep_steps,
+    contract_ratio,
 )
 
 
@@ -130,6 +131,20 @@ def create_mesfet(
         Quantities to dump. Default: ["potential", "doping", "electrons",
         "holes", "e_field", "qfn", "qfp"]
 
+    Accuracy note
+    -------------
+    A MESFET's terminal current at zero bias is the near-cancellation of
+    large drift and diffusion terms.  On any graded mesh the cancellation
+    is imperfect, so PADRE reports a small spurious current with every
+    terminal at 0 V.  Measured on nanoHUB with the default 55x43 mesh:
+    3.3e-6 A, about 0.6% of the 5.3e-4 A on-current at Vds = 3 V (the
+    pre-2026-09 mesh gave 7.9e-6 A, ~1.3%).  A fully uniform mesh reaches
+    0.12% but costs resolution in the gate depletion region.
+
+    Treat that as the error floor: on-state Id-Vds is trustworthy, but
+    currents at or below ~1% of the on-current -- deep pinch-off,
+    subthreshold, gate leakage -- are not.
+
     Returns
     -------
     Simulation
@@ -200,13 +215,26 @@ def create_mesfet(
     # 22 channel rows) instead of a proportional split.
     ny_sub = max(2, ny // 2)
 
-    sim.mesh.add_x_mesh(1, 0, ratio=1.1)
+    # Grading is bounded rather than fixed.  A MESFET's zero-bias terminal
+    # current is the near-cancellation of large drift and diffusion terms;
+    # on a strongly graded mesh the cancellation is imperfect and PADRE
+    # reports a spurious equilibrium current.  Measured on the shipped
+    # mesh: 7.9e-6 A with every terminal at 0 V, against 7.3e-7 A on a
+    # uniform mesh.  That residual is the error floor on every current.
+    channel_depth = total_depth - substrate_depth
+    h_ch = max(channel_depth / max(ny - ny_sub, 1), 1e-3)
+    sim.mesh.add_x_mesh(1, 0, ratio=1.05)
     for pos, ratio in unique_x:
-        sim.mesh.add_x_mesh(int(nx * pos / device_width), pos, ratio=ratio)
-    sim.mesh.add_x_mesh(nx, device_width, ratio=1.1)
-    sim.mesh.add_y_mesh(1, 0.0, ratio=1.1)
-    sim.mesh.add_y_mesh(ny_sub, substrate_depth, ratio=0.9)
-    sim.mesh.add_y_mesh(ny, total_depth, ratio=0.8)
+        sim.mesh.add_x_mesh(int(nx * pos / device_width), pos,
+                            ratio=max(ratio, 0.95) if ratio < 1 else min(ratio, 1.05))
+    sim.mesh.add_x_mesh(nx, device_width, ratio=1.05)
+    sim.mesh.add_y_mesh(1, 0.0, ratio=1.05)
+    sim.mesh.add_y_mesh(ny_sub, substrate_depth,
+                        ratio=min(contract_ratio(substrate_depth, ny_sub - 1,
+                                                 h_ch * 2), 0.98))
+    sim.mesh.add_y_mesh(ny, total_depth,
+                        ratio=min(contract_ratio(channel_depth, ny - ny_sub,
+                                                 h_ch), 0.98))
     nx_src = int(nx * source_width / device_width)
     nx_gate_start = int(nx * gate_start / device_width)
     nx_gate_end = int(nx * gate_end / device_width)
@@ -288,7 +316,8 @@ def create_mesfet(
         # Output characteristic (Id vs Vds at fixed Vgs)
         if vds_sweep is not None:
             v_start, v_end, v_step = vds_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_mesfet vds_sweep")
 
             # Ramp gate-source voltage to the operating point
             if abs(vgs - bias[3]) > 1e-10:
@@ -311,7 +340,7 @@ def create_mesfet(
                 outfile="idvd"
             ))
             n_prior += nsteps + 1
-            bias[2] = v_start + v_step * nsteps
+            bias[2] = v_final
 
         # 2D contour maps (Plot3D scatter files)
         if contour_maps:

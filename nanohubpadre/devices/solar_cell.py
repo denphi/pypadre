@@ -23,7 +23,7 @@ from ..material import Material
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
-from ._common import check_mesh_size
+from ._common import check_mesh_size, sweep_steps
 
 
 def create_solar_cell(
@@ -79,7 +79,8 @@ def create_solar_cell(
         Depth of the device in the third dimension in microns (default:
         1.0).  Terminal currents scale linearly with this value; increase
         it (e.g. 1e4 for a 1 cm-deep strip) to lift solar-cell dark
-        currents above PADRE's floating-point noise floor.
+        currents proportionally.  Note this does NOT lift the dark
+        current above PADRE's noise floor: both scale together.
     nx : int
         Mesh points in x direction (default: 3)
     ny : int
@@ -142,11 +143,15 @@ def create_solar_cell(
     >>> result = sim.run()
     """
     warnings.warn(
-        "create_solar_cell() is experimental. "
-        "PADRE cannot resolve solar-cell dark currents (I₀ ~ 10⁻²⁰ A) with the "
-        "default 1 µm × 1 µm cross-section — IV log output will be numerical noise. "
-        "Increase device_z_width (e.g. 1e4 µm) to scale terminal currents up. "
-        "Band diagrams and carrier profiles are still valid.",
+        "create_solar_cell() is experimental: PADRE cannot resolve this "
+        "device's dark current. Measured on nanoHUB, the IV log holds "
+        "1e-17..1e-15 A that decreases with forward bias and violates "
+        "terminal-current continuity at every bias point. Scaling "
+        "device_z_width does NOT help - it multiplies signal and noise by "
+        "the same factor (verified: z=1 and z=1e4 give currents identical "
+        "to 4 digits after scaling). Do not read I-V, ideality or Voc from "
+        "this device. Band diagrams, carrier profiles and the doping "
+        "profile are still valid.",
         UserWarning,
         stacklevel=2,
     )
@@ -238,7 +243,8 @@ def create_solar_cell(
         # (first solve after INIT must use PREV, not PROJ)
         if forward_sweep is not None:
             v_start, v_end, v_step = forward_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_solar_cell forward_sweep")
 
             # Sweep voltage
             sim.add_solve(Solve(

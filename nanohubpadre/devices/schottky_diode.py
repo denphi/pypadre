@@ -12,7 +12,7 @@ from ..contact import Contact
 from ..models import Models
 from ..solver import System, Solve
 from ..log import Log
-from ._common import check_mesh_size
+from ._common import check_mesh_size, sweep_steps
 
 
 def create_schottky_diode(
@@ -212,7 +212,8 @@ def create_schottky_diode(
 
         if forward_sweep is not None:
             v_start, v_end, v_step = forward_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_schottky_diode forward_sweep")
             # Store forward point count so callers can split the combined IV file
             sim._fwd_nsteps = nsteps + 1
             # Only 1 prior solution (initial): use previous=True for first sweep
@@ -230,7 +231,8 @@ def create_schottky_diode(
 
         if reverse_sweep is not None:
             v_start, v_end, v_step = reverse_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_schottky_diode reverse_sweep")
             # If forward sweep ran first, 2+ solutions exist → project=True
             # Otherwise only 1 prior solution → previous=True
             use_project = forward_sweep is not None

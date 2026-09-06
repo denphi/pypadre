@@ -9,6 +9,7 @@ import unittest
 
 from nanohubpadre import (
     create_pn_diode,
+    create_nin_diode,
     create_mos_capacitor,
     create_mosfet,
     create_mesfet,
@@ -388,6 +389,7 @@ class TestDeviceDeckStructure(unittest.TestCase):
             create_bjt(),
             create_schottky_diode(),
             create_solar_cell(),
+            create_nin_diode(),
         ]
         for sim in devices:
             deck = sim.generate_deck()
@@ -403,6 +405,7 @@ class TestDeviceDeckStructure(unittest.TestCase):
             create_bjt(),
             create_schottky_diode(),
             create_solar_cell(),
+            create_nin_diode(),
         ]
         for sim in devices:
             deck = sim.generate_deck().lower()
@@ -418,6 +421,7 @@ class TestDeviceDeckStructure(unittest.TestCase):
             create_bjt(),
             create_schottky_diode(),
             create_solar_cell(),
+            create_nin_diode(),
         ]
         for sim in devices:
             deck = sim.generate_deck().lower()

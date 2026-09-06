@@ -9,7 +9,7 @@ nanohub-padre provides a Pythonic interface to generate PADRE input decks, makin
 ## Features
 
 - **Pythonic Interface**: Define meshes, regions, doping profiles, and solver settings using Python objects
-- **Device Factory Functions**: Pre-built functions to create common devices (PN diode, MOSFET, BJT, solar cell, etc.)
+- **Device Factory Functions**: Pre-built functions to create common devices (PN/PIN diode, NIN/PIP isotype diode, MOSFET, BJT, solar cell, etc.)
 - **Complete PADRE Support**: Covers mesh generation, material properties, physical models, and solve commands
 - **Validation**: Built-in parameter validation and helpful error messages
 - **Examples**: Ready-to-run examples for common device structures
@@ -100,7 +100,8 @@ The library includes factory functions for common devices:
 
 | Function | Description |
 |----------|-------------|
-| `create_pn_diode` | PN junction diode |
+| `create_pn_diode` | PN junction diode (PIN with `intrinsic_width`) |
+| `create_nin_diode` | NIN/PIP isotype diode — unipolar, non-rectifying |
 | `create_mos_capacitor` | MOS capacitor for C-V analysis |
 | `create_mosfet` | NMOS/PMOS transistor |
 | `create_mesfet` | Metal-semiconductor FET |

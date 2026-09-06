@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Any
 
 from enum import Enum
+import warnings
+
 import numpy as np
 
 
@@ -487,6 +489,75 @@ class IVData:
         """
         return np.array([bp['currents'].get(electrode, {}).get(component, 0.0)
                 for bp in self.bias_points])
+
+    def continuity_error(self, electrodes: Tuple[int, int] = (1, 2)) -> np.ndarray:
+        """
+        Relative terminal-current imbalance per bias point.
+
+        For a two-terminal device current continuity requires I1 == -I2, so
+        ``|I1 + I2| / max(|I1|, |I2|)`` is a direct measure of whether a bias
+        point is converged physics or round-off.  Measured against a
+        reference PADRE run it is 0.00% at every biased point; values above a
+        percent or so mean the current is at the solver's noise floor and any
+        ideality factor or saturation current extracted from it is
+        meaningless.
+
+        Returns
+        -------
+        np.ndarray
+            Relative imbalance (0.0 = perfect) per bias point.  Points where
+            both currents are exactly zero report 0.0.
+        """
+        a, b = electrodes
+        i1 = self.get_currents(a)
+        i2 = self.get_currents(b)
+        denom = np.maximum(np.abs(i1), np.abs(i2))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            err = np.where(denom > 0, np.abs(i1 + i2) / denom, 0.0)
+        return err
+
+    def check_continuity(self, electrodes: Tuple[int, int] = (1, 2),
+                         tolerance: float = 0.01,
+                         warn: bool = True) -> np.ndarray:
+        """
+        Flag bias points whose terminal currents violate continuity.
+
+        Parameters
+        ----------
+        electrodes : (int, int)
+            The two terminals that should carry equal and opposite current.
+        tolerance : float
+            Relative imbalance above which a point is considered unresolved
+            (default 0.01 = 1%).
+        warn : bool
+            Emit a UserWarning naming the worst offenders.
+
+        Returns
+        -------
+        np.ndarray
+            Boolean mask, True where the point is suspect.
+        """
+        if len(self.bias_points) == 0:
+            return np.zeros(0, dtype=bool)
+        err = self.continuity_error(electrodes)
+        bad = err > tolerance
+        if warn and bad.any():
+            a, b = electrodes
+            v = self.get_voltages(a)
+            i1 = self.get_currents(a)
+            worst = np.argsort(err)[::-1][:3]
+            detail = ", ".join(
+                f"V{a}={v[k]:+.3g} V: I={i1[k]:.2e} A, {err[k] * 100:.1f}% off"
+                for k in worst)
+            warnings.warn(
+                f"{int(bad.sum())} of {len(err)} bias points violate terminal-"
+                f"current continuity (I{a} + I{b} != 0) by more than "
+                f"{tolerance * 100:g}%. Those currents are at the solver's "
+                f"noise floor, not physics -- do not extract ideality factors "
+                f"or saturation currents from them. Worst: {detail}.",
+                UserWarning, stacklevel=2,
+            )
+        return bad
 
     def get_iv_data(self, electrode: int) -> Tuple[List[float], List[float]]:
         """

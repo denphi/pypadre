@@ -15,7 +15,7 @@ from ..solver import System, Solve
 from ..log import Log
 from ..plot3d import Plot3D
 from ._common import (
-    check_mesh_size, solve_guess, add_bias_ramp, JUNCTION_STEP, DRAIN_STEP,
+    check_mesh_size, solve_guess, add_bias_ramp, JUNCTION_STEP, DRAIN_STEP, sweep_steps,
 )
 
 
@@ -325,7 +325,8 @@ def create_bjt(
         # Common-emitter output characteristics (Ic vs Vce at fixed Vbe)
         if vce_sweep is not None:
             v_start, v_end, v_step = vce_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_bjt vce_sweep")
 
             # Ramp base-emitter voltage up in small steps (forward-biased
             # junction: never applied as a single jump)
@@ -350,12 +351,13 @@ def create_bjt(
                 outfile="ic_vce_sol"
             ))
             n_prior += nsteps + 1
-            bias[3] = v_start + v_step * nsteps
+            bias[3] = v_final
 
         # Gummel plot (Ic, Ib vs Vbe at fixed Vce)
         if gummel_sweep is not None:
             v_start, v_end, v_step = gummel_sweep
-            nsteps = int(abs(v_end - v_start) / abs(v_step))
+            nsteps, v_step, v_final = sweep_steps(
+                v_start, v_end, v_step, "create_bjt gummel_sweep")
 
             # Ramp collector-emitter voltage to the operating point
             if abs(gummel_vce - bias[3]) > 1e-10:
@@ -385,7 +387,7 @@ def create_bjt(
                 outfile="gummel_sol"
             ))
             n_prior += nsteps + 1
-            bias[2] = v_start + v_step * nsteps
+            bias[2] = v_final
 
         # 2D contour maps (Plot3D scatter files)
         if contour_maps:

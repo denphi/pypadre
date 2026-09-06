@@ -109,23 +109,40 @@ def create_pn_diode():
         outfile="pn_eq"
     ))
 
-    # Forward bias sweep: 0 to 0.8V
+    # Forward bias sweep: 0 to 0.8V.
+    # The first bias solve after SOLVE INIT must use PREVIOUS: PROJECT
+    # extrapolates from two prior solutions and only one exists here.
     sim.add_solve(Solve(
-        project=True,
+        previous=True,
         v1=0.0, v2=0.0,  # Start at 0V
         vstep=0.05,
         nsteps=16,
         electrode=2,
+        no_append=True,
         outfile="pn_fwd_a"
+    ))
+
+    # Ramp back down to 0 V before reversing: jumping straight from +0.8 V
+    # to -0.5 V is a 1.3 V step across a forward-biased junction and will
+    # not converge.
+    sim.add_solve(Solve(
+        project=True,
+        v2=0.8,
+        vstep=-0.1,
+        nsteps=8,
+        electrode=2,
+        no_append=True,
+        outfile="pn_ramp_a"
     ))
 
     # Reverse bias: 0 to -5V
     sim.add_solve(Solve(
         project=True,
-        v2=-0.5,
+        v2=0.0,
         vstep=-0.5,
-        nsteps=9,
+        nsteps=10,
         electrode=2,
+        no_append=True,
         outfile="pn_rev_a"
     ))
 

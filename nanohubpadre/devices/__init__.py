@@ -6,6 +6,7 @@ for common device types like diodes, MOSFETs, MESFETs, and bipolar transistors.
 """
 
 from .pn_diode import create_pn_diode, pn_diode
+from .nin_diode import create_nin_diode, nin_diode, pip_diode
 from .mos_capacitor import create_mos_capacitor, mos_capacitor
 from .mosfet import create_mosfet, mosfet
 from .mesfet import create_mesfet, mesfet
@@ -18,6 +19,7 @@ from .schematics import device_schematic, DeviceSchematic
 __all__ = [
     # Factory functions
     "create_pn_diode",
+    "create_nin_diode",
     "create_mos_capacitor",
     "create_mosfet",
     "create_mesfet",
@@ -26,6 +28,8 @@ __all__ = [
     "create_solar_cell",
     # Aliases
     "pn_diode",
+    "nin_diode",
+    "pip_diode",
     "mos_capacitor",
     "mosfet",
     "mesfet",

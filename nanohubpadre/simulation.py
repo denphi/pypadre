@@ -399,6 +399,30 @@ class Simulation:
         self._commands.append(log)
         return self
 
+    @property
+    def log(self) -> Optional[Log]:
+        """
+        The most recently added LOG command, or None.
+
+        Exists so that ``sim.log = Log(ivfile="iv")`` works.  Without it the
+        assignment silently created an unused attribute, no LOG line reached
+        the deck, and the run produced no I-V file at all.
+        """
+        for cmd in reversed(self._commands):
+            if isinstance(cmd, Log):
+                return cmd
+        return None
+
+    @log.setter
+    def log(self, value: Optional[Log]) -> None:
+        self._commands = [c for c in self._commands if not isinstance(c, Log)]
+        if value is not None:
+            if not isinstance(value, Log):
+                raise TypeError(
+                    f"Simulation.log must be a Log instance, got "
+                    f"{type(value).__name__}")
+            self._commands.append(value)
+
     def add_load(self, load: Load) -> "Simulation":
         """Add a load command."""
         self._commands.append(load)
